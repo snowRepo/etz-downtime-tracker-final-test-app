@@ -2,16 +2,36 @@
 
 ## 📋 Table of Contents
 
+- [Quick Start Guide](#quick-start-guide)
 - [Overview](#overview)
 - [Features](#features)
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
+  - [Method 1: XAMPP Installation (Recommended)](#method-1-xampp-installation-recommended-for-windows)
+  - [Method 2: Manual Installation](#method-2-manual-installation-advanced-users)
 - [Database Schema](#database-schema)
 - [Application Structure](#application-structure)
 - [User Guide](#user-guide)
 - [Developer Guide](#developer-guide)
 - [Security Features](#security-features)
-- [Troubleshooting](#troubleshooting)
+- [XAMPP-Specific Troubleshooting](#xampp-specific-troubleshooting)
+- [General Troubleshooting](#general-troubleshooting)
+
+---
+
+## ⚡ Quick Start Guide
+
+**Want to get started right away?** Here's the fastest path:
+
+1. **Install XAMPP** → Download from [apachefriends.org](https://www.apachefriends.org/)
+2. **Start Services** → Open XAMPP Control Panel, start Apache & MySQL
+3. **Copy Files** → Extract this project to `C:\xampp\htdocs\etz-downtime`
+4. **Install Dependencies** → Run `composer install` in the project folder
+5. **Import Database** → Open [localhost/phpmyadmin](http://localhost/phpmyadmin), import `downtimedb.sql`
+6. **Configure** → Copy `config.php.example` to `config.php`, set DB credentials (user: `root`, password: empty)
+7. **Launch** → Visit [localhost/etz-downtime](http://localhost/etz-downtime)
+
+> 📖 **New to XAMPP?** See the detailed [XAMPP Installation Guide](#method-1-xampp-installation-recommended-for-windows) below.
 
 ---
 
@@ -112,20 +132,190 @@ The **eTranzact Downtime Tracking System** is a comprehensive web application de
 
 ## 🚀 Installation
 
-### Step 1: Clone/Download the Repository
+### Method 1: XAMPP Installation (Recommended for Windows)
+
+This is the easiest way to get started, especially if you're new to PHP development.
+
+#### Step 1: Install XAMPP
+
+1. **Download XAMPP**:
+
+   - Visit [https://www.apachefriends.org/](https://www.apachefriends.org/)
+   - Download XAMPP for Windows (PHP 7.4 or higher)
+   - Run the installer and follow the installation wizard
+
+2. **Install Components**:
+
+   - Make sure to select **Apache** and **MySQL** during installation
+   - Default installation path: `C:\xampp`
+
+3. **Start XAMPP Services**:
+   - Open **XAMPP Control Panel** (search for it in Windows Start menu)
+   - Click **Start** next to **Apache**
+   - Click **Start** next to **MySQL**
+   - Both should show green "Running" status
+
+#### Step 2: Download/Clone the Application
+
+1. **Navigate to XAMPP's htdocs folder**:
+
+   ```
+   C:\xampp\htdocs\
+   ```
+
+2. **Option A - Download ZIP**:
+
+   - Download the project as a ZIP file
+   - Extract it to `C:\xampp\htdocs\etz-downtime`
+
+3. **Option B - Git Clone** (if you have Git installed):
+   ```bash
+   cd C:\xampp\htdocs
+   git clone <repository-url> etz-downtime
+   cd etz-downtime
+   ```
+
+#### Step 3: Install PHP Dependencies
+
+1. **Install Composer** (if not already installed):
+
+   - Download from [https://getcomposer.org/download/](https://getcomposer.org/download/)
+   - Run the installer
+   - Restart your command prompt/terminal
+
+2. **Install Project Dependencies**:
+   - Open Command Prompt or PowerShell
+   - Navigate to the project folder:
+     ```bash
+     cd C:\xampp\htdocs\etz-downtime
+     ```
+   - Run Composer:
+     ```bash
+     composer install
+     ```
+   - Wait for dependencies to download (this installs the PDF library)
+
+#### Step 4: Create the Database
+
+1. **Open phpMyAdmin**:
+
+   - In your web browser, go to: [http://localhost/phpmyadmin](http://localhost/phpmyadmin)
+   - You should see the phpMyAdmin interface
+
+2. **Import the Database**:
+
+   - Click on **"New"** in the left sidebar to create a new database
+   - Or click on the **"Import"** tab at the top
+   - Click **"Choose File"** button
+   - Navigate to `C:\xampp\htdocs\etz-downtime\downtimedb.sql`
+   - Select the file and click **"Open"**
+   - Scroll down and click **"Import"** button
+   - Wait for the success message
+
+3. **Verify Database Creation**:
+   - You should see a new database called `downtimedb` in the left sidebar
+   - Click on it to expand and verify these tables exist:
+     - `companies` (17 companies)
+     - `services` (8 services)
+     - `issues_reported`
+     - `incident_updates`
+     - `downtime_incidents`
+     - `sla_targets`
+
+#### Step 5: Configure Database Connection
+
+1. **Create Configuration File**:
+
+   - Navigate to `C:\xampp\htdocs\etz-downtime\`
+   - Find the file `config.php.example`
+   - Make a copy and rename it to `config.php`
+
+2. **Edit `config.php`**:
+
+   - Open `config.php` in any text editor (Notepad, VS Code, etc.)
+   - Update the database credentials:
+
+   ```php
+   <?php
+   // Database Configuration
+   define('DB_HOST', 'localhost');
+   define('DB_USER', 'root');           // Default XAMPP username
+   define('DB_PASS', '');               // Default XAMPP password is empty
+   define('DB_NAME', 'downtimedb');     // Database name
+
+   // Application Configuration
+   define('APP_ENV', 'development');    // Use 'production' when deploying
+   ```
+
+3. **Save the file**
+
+> **Note**: XAMPP's default MySQL username is `root` with an **empty password**. If you've changed your MySQL password, use that instead.
+
+#### Step 6: Access the Application
+
+1. **Open Your Browser**:
+
+   - Navigate to: [http://localhost/etz-downtime/](http://localhost/etz-downtime/)
+   - You should see the **Dashboard** page
+
+2. **Verify Installation**:
+   - The dashboard should load without errors
+   - You should see statistics cards (Total Incidents, Resolved, Pending)
+   - The navigation bar should have links to: Dashboard, Report Incident, Incidents, Analytics, SLA Report
+
+#### Step 7: Test the Application
+
+1. **Report a Test Incident**:
+
+   - Click **"Report Incident"** in the navbar
+   - Fill in the form:
+     - Your Name: `Test User`
+     - Service: Select any service (e.g., "Mobile Money")
+     - Companies: Check one or more companies
+     - Impact Level: Select any level
+     - Root Cause: Enter a test description
+   - Click **"Submit Report"**
+   - You should see a success message
+
+2. **View the Incident**:
+
+   - Click **"Dashboard"** to return to the homepage
+   - Your test incident should appear in the "Recent Incidents" table
+   - Click **"Incidents"** to see all incidents grouped by service
+
+3. **Check Analytics**:
+   - Click **"Analytics"** in the navbar
+   - You should see charts displaying your incident data
+
+---
+
+### Method 2: Manual Installation (Advanced Users)
+
+If you're not using XAMPP or prefer a custom setup:
+
+#### Step 1: Prerequisites
+
+Ensure you have:
+
+- Apache 2.4+ or Nginx
+- PHP 7.4+ (with PDO, PDO_MySQL, mbstring, GD extensions)
+- MySQL 5.7+ or MariaDB 10.3+
+- Composer
+
+#### Step 2: Clone/Download the Repository
 
 ```bash
 git clone <repository-url>
 cd etz-downtime
 ```
 
-### Step 2: Install Dependencies
+#### Step 3: Install Dependencies
 
 ```bash
 composer install
 ```
 
-### Step 3: Database Setup
+#### Step 4: Database Setup
 
 1. **Create the Database**:
 
@@ -141,7 +331,7 @@ composer install
    - `downtime_incidents` - Detailed downtime tracking
    - `sla_targets` - SLA configuration
 
-### Step 4: Configure Database Connection
+#### Step 5: Configure Database Connection
 
 1. **Copy the example config**:
 
@@ -158,7 +348,7 @@ composer install
    define('APP_ENV', 'production'); // or 'development'
    ```
 
-### Step 5: Set Permissions
+#### Step 6: Set Permissions
 
 ```bash
 # Linux/Mac
@@ -168,9 +358,9 @@ chmod 755 includes/
 # Windows - Ensure IIS_IUSRS or IUSR has read permissions
 ```
 
-### Step 6: Access the Application
+#### Step 7: Access the Application
 
-Navigate to: `http://localhost/etz-downtime/`
+Navigate to your configured web server URL (e.g., `http://localhost/etz-downtime/`)
 
 ---
 
@@ -497,7 +687,185 @@ Edit `includes/pdf_config.php` to modify:
 
 ---
 
-## 🐛 Troubleshooting
+## 🔧 XAMPP-Specific Troubleshooting
+
+### Apache Won't Start
+
+**Problem**: Apache shows "Port 80 in use by another application"
+
+**Solutions**:
+
+1. **Check if Skype is using Port 80**:
+
+   - Open Skype → Tools → Options → Advanced → Connection
+   - Uncheck "Use port 80 and 443 as alternatives"
+   - Restart Skype
+
+2. **Check if IIS is running**:
+
+   - Open Services (Win + R, type `services.msc`)
+   - Find "World Wide Web Publishing Service"
+   - Right-click → Stop
+   - Set Startup type to "Disabled"
+
+3. **Change Apache Port**:
+   - Open XAMPP Control Panel
+   - Click "Config" next to Apache → "httpd.conf"
+   - Find `Listen 80` and change to `Listen 8080`
+   - Find `ServerName localhost:80` and change to `ServerName localhost:8080`
+   - Save and restart Apache
+   - Access app at: `http://localhost:8080/etz-downtime/`
+
+### MySQL Won't Start
+
+**Problem**: MySQL shows "Port 3306 in use"
+
+**Solutions**:
+
+1. **Check for other MySQL installations**:
+
+   - Open Task Manager (Ctrl + Shift + Esc)
+   - Look for `mysqld.exe` processes
+   - End any MySQL processes not from XAMPP
+
+2. **Change MySQL Port**:
+   - Open XAMPP Control Panel
+   - Click "Config" next to MySQL → "my.ini"
+   - Find `port=3306` and change to `port=3307`
+   - Update `config.php`: `define('DB_HOST', 'localhost:3307');`
+   - Save and restart MySQL
+
+### Composer Not Found
+
+**Problem**: `'composer' is not recognized as an internal or external command`
+
+**Solutions**:
+
+1. **Install Composer**:
+
+   - Download from [https://getcomposer.org/download/](https://getcomposer.org/download/)
+   - Run the Windows installer
+   - Restart Command Prompt/PowerShell
+
+2. **Use XAMPP's PHP**:
+   - Add to Windows PATH: `C:\xampp\php`
+   - Restart Command Prompt
+   - Try `composer install` again
+
+### Database Import Failed
+
+**Problem**: Error importing `downtimedb.sql` in phpMyAdmin
+
+**Solutions**:
+
+1. **File too large**:
+
+   - Edit `php.ini` in XAMPP Control Panel → Config → PHP (php.ini)
+   - Find and increase these values:
+     ```ini
+     upload_max_filesize = 64M
+     post_max_size = 64M
+     max_execution_time = 300
+     ```
+   - Restart Apache
+
+2. **Import via Command Line**:
+   - Open Command Prompt
+   - Navigate to XAMPP's MySQL bin:
+     ```bash
+     cd C:\xampp\mysql\bin
+     ```
+   - Run import:
+     ```bash
+     mysql -u root -p downtimedb < "C:\xampp\htdocs\etz-downtime\downtimedb.sql"
+     ```
+   - Press Enter (no password by default)
+
+### Permission Denied Errors
+
+**Problem**: "Permission denied" when accessing files
+
+**Solutions**:
+
+1. **Run XAMPP as Administrator**:
+
+   - Right-click XAMPP Control Panel
+   - Select "Run as administrator"
+
+2. **Check File Permissions**:
+   - Right-click project folder → Properties → Security
+   - Ensure your user account has "Full control"
+
+### Blank Page / White Screen
+
+**Problem**: Application shows blank white page
+
+**Solutions**:
+
+1. **Enable Error Display**:
+
+   - Edit `config.php`:
+     ```php
+     define('APP_ENV', 'development');
+     ```
+   - Refresh the page to see actual errors
+
+2. **Check Apache Error Log**:
+
+   - XAMPP Control Panel → Logs → Apache (error.log)
+   - Look for PHP errors
+
+3. **Check PHP Extensions**:
+   - Open `php.ini` (XAMPP Control Panel → Config → PHP)
+   - Ensure these are enabled (remove `;` at start):
+     ```ini
+     extension=pdo_mysql
+     extension=mbstring
+     extension=gd
+     ```
+   - Restart Apache
+
+### Charts Not Showing
+
+**Problem**: Analytics page loads but charts are empty
+
+**Solutions**:
+
+1. **Check Internet Connection**:
+
+   - Charts use CDN for Chart.js library
+   - Ensure you have internet access
+
+2. **Check Browser Console**:
+   - Press F12 in browser
+   - Look for JavaScript errors in Console tab
+   - Look for failed network requests in Network tab
+
+### PDF Export Not Working
+
+**Problem**: "Failed to generate PDF" error
+
+**Solutions**:
+
+1. **Verify Composer Dependencies**:
+
+   ```bash
+   cd C:\xampp\htdocs\etz-downtime
+   composer install
+   ```
+
+2. **Check vendor folder exists**:
+
+   - Verify `C:\xampp\htdocs\etz-downtime\vendor` folder exists
+   - Should contain TCPDF library
+
+3. **Enable GD Extension**:
+   - Edit `php.ini`: Remove `;` from `extension=gd`
+   - Restart Apache
+
+---
+
+## 🐛 General Troubleshooting
 
 ### Common Issues
 
