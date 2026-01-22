@@ -1,5 +1,5 @@
 <?php
-require_once 'config.php';
+require_once '../config/config.php';
 session_start();
 
 // Set default date range (last 30 days including today)
@@ -190,10 +190,10 @@ $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER B
 </head>
 <body class="bg-gray-50 dark:bg-gray-900">
     <!-- Navbar -->
-    <?php include 'includes/navbar.php'; ?>
+    <?php include '../src/includes/navbar.php'; ?>
     
     <!-- Loading Overlay -->
-    <?php include 'includes/loading.php'; ?>
+    <?php include '../src/includes/loading.php'; ?>
     
     <main class="py-6">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -205,8 +205,8 @@ $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER B
             <div class="mt-4 flex md:mt-0 md:ml-6">
             
             <!-- PDF Export Button -->
-            <a href="export_analytics_pdf.php?company_id=<?= $companyId ? htmlspecialchars($companyId) : '' ?>&start_date=<?= htmlspecialchars($startDate) ?>&end_date=<?= htmlspecialchars($endDate) ?>" 
-               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+            <a href="../src/exports/export_analytics_pdf.php?company_id=<?= $companyId ? htmlspecialchars($companyId) : '' ?>&start_date=<?= htmlspecialchars($startDate) ?>&end_date=<?= htmlspecialchars($endDate) ?>" 
+               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" data-no-loading>
                 <svg class="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
                 </svg>

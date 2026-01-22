@@ -24,22 +24,22 @@ function isMobileActive($page) {
                 <!-- Logo -->
                 <div class="flex items-center">
                     <a href="index.php" class="flex items-center space-x-2.5 group">
-                            <img src="includes/logo1.png" alt="eTranzact Logo" class="h-24 w-auto object-contain">
+                            <img src="../src/assets/logo1.png" alt="eTranzact Logo" class="h-24 w-auto object-contain">
                     </a>
                 </div>
                 
                 <!-- Desktop Navigation -->
                 <div class="hidden md:flex space-x-1 absolute left-1/2 transform -translate-x-1/2">
-                    <a href="index.php" class="<?php echo isActive('index.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
+                    <a href="../public/index.php" class="<?php echo isActive('index.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
                         Dashboard
                     </a>
-                    <a href="incidents.php" class="<?php echo isActive('incidents.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
+                    <a href="../public/incidents.php" class="<?php echo isActive('incidents.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
                         Incidents
                     </a>
-                    <a href="sla_report.php" class="<?php echo isActive('sla_report.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
+                    <a href="../public/sla_report.php" class="<?php echo isActive('sla_report.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
                         SLA
                     </a>
-                    <a href="analytics.php" class="<?php echo isActive('analytics.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
+                    <a href="../public/analytics.php" class="<?php echo isActive('analytics.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
                         Analytics
                     </a>
                 </div>
@@ -60,7 +60,7 @@ function isMobileActive($page) {
                     </button>
                     
                     <!-- Report Button (Desktop) -->
-                    <a href="report.php" class="hidden md:inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800">
+                    <a href="../public/report.php" class="hidden md:inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 dark:focus:ring-offset-gray-800">
                         <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                         </svg>
@@ -95,19 +95,19 @@ function isMobileActive($page) {
          class="md:hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
          style="display: none;">
         <div class="px-2 pt-2 pb-3 space-y-1">
-            <a href="index.php" class="<?php echo isMobileActive('index.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
+            <a href="../public/index.php" class="<?php echo isMobileActive('index.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
                 Dashboard
             </a>
-            <a href="incidents.php" class="<?php echo isMobileActive('incidents.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
+            <a href="../public/incidents.php" class="<?php echo isMobileActive('incidents.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
                 Incidents
             </a>
-            <a href="sla_report.php" class="<?php echo isMobileActive('sla_report.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
+            <a href="../public/sla_report.php" class="<?php echo isMobileActive('sla_report.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
                 SLA
             </a>
-            <a href="analytics.php" class="<?php echo isMobileActive('analytics.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
+            <a href="../public/analytics.php" class="<?php echo isMobileActive('analytics.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
                 Analytics
             </a>
-            <a href="report.php" class="block mx-3 my-2 px-4 py-2.5 text-center text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg transition-colors duration-150">
+            <a href="../public/report.php" class="block mx-3 my-2 px-4 py-2.5 text-center text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 rounded-lg transition-colors duration-150">
                 Report Incident
             </a>
         </div>

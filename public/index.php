@@ -1,5 +1,5 @@
 <?php
-require_once 'config.php';
+require_once '../config/config.php';
 session_start();
 
 // Get statistics and recent incidents
@@ -104,10 +104,10 @@ try {
 </head>
 <body class="bg-gray-50 dark:bg-gray-900">
     <!-- Navbar -->
-    <?php include 'includes/navbar.php'; ?>
+    <?php include '../src/includes/navbar.php'; ?>
     
     <!-- Loading Overlay -->
-    <?php include 'includes/loading.php'; ?>
+    <?php include '../src/includes/loading.php'; ?>
 
     <!-- Main Content -->
     <main class="py-8">
@@ -115,7 +115,7 @@ try {
             <!-- Page Header -->
             <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                    <h1 class="text-2xl font-semibold text-gray-900 dark:text-white">Dashboard</h1>
+                    <h1 class="text-2xl font-bold leading-7 text-gray-900 dark:text-white sm:text-3xl sm:truncate">Dashboard</h1>
                     <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Monitor and manage downtime incidents across all services</p>
                 </div>
                 <div class="mt-4 sm:mt-0 flex items-center space-x-3">

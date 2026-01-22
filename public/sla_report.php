@@ -1,6 +1,6 @@
 <?php
-require_once 'config.php';
-require_once 'vendor/autoload.php';
+require_once '../config/config.php';
+require_once '../vendor/autoload.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -162,10 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
 </head>
 <body class="bg-gray-100 dark:bg-gray-900">
     <!-- Navbar -->
-    <?php include 'includes/navbar.php'; ?>
+    <?php include '../src/includes/navbar.php'; ?>
 
     <!-- Loading Overlay -->
-    <?php include 'includes/loading.php'; ?>
+    <?php include '../src/includes/loading.php'; ?>
 
     <!-- Main Content -->
     <main class="pt-4 pb-10">
@@ -193,14 +193,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
                         </div>
 
                         <div id="export-menu" 
-                             class="hidden origin-top-right absolute right-0 mt-2 w-64 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50" 
+                             class="hidden origin-top-right absolute left-0 sm:right-0 sm:left-auto mt-2 w-56 sm:w-64 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 dark:ring-gray-700 focus:outline-none z-50" 
                              role="menu" aria-orientation="vertical" aria-labelledby="menu-button" tabindex="-1">
                             <div class="py-1" role="none">
-                                <div class="px-4 py-2 text-xs font-medium text-gray-500 border-b border-gray-100">
+                                <div class="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
                                     Export to Excel
                                 </div>
-                                <a href="export_sla_report.php?start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
-                                   class="text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100" role="menuitem" tabindex="-1">
+                                <a href="../src/exports/export_sla_report.php?start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
+                                   class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" tabindex="-1" data-no-loading>
                                     <span class="flex items-center">
                                         <svg class="mr-2 h-4 w-4 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -209,8 +209,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
                                     </span>
                                 </a>
                                 <?php if ($companyId): ?>
-                                <a href="export_sla_report.php?company_id=<?= urlencode($companyId) ?>&start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
-                                   class="text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100" role="menuitem" tabindex="-1">
+                                <a href="../src/exports/export_sla_report.php?company_id=<?= urlencode($companyId) ?>&start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
+                                   class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" tabindex="-1" data-no-loading>
                                     <span class="flex items-center">
                                         <svg class="mr-2 h-4 w-4 text-green-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -220,11 +220,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
                                 </a>
                                 <?php endif; ?>
                                 
-                                <div class="px-4 py-2 text-xs font-medium text-gray-500 border-t border-b border-gray-100 mt-1">
+                                <div class="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 border-t border-b border-gray-100 dark:border-gray-700 mt-1">
                                     Export to PDF
                                 </div>
-                                <a href="export_sla_report_pdf.php?start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
-                                   class="text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100" role="menuitem" tabindex="-1">
+                                <a href="../src/exports/export_sla_report_pdf.php?start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
+                                   class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" tabindex="-1" data-no-loading>
                                     <span class="flex items-center">
                                         <svg class="mr-2 h-4 w-4 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
@@ -233,8 +233,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
                                     </span>
                                 </a>
                                 <?php if ($companyId): ?>
-                                <a href="export_sla_report_pdf.php?company_id=<?= urlencode($companyId) ?>&start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
-                                   class="text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100" role="menuitem" tabindex="-1">
+                                <a href="../src/exports/export_sla_report_pdf.php?company_id=<?= urlencode($companyId) ?>&start_date=<?= urlencode($startDate) ?>&end_date=<?= urlencode($endDate) ?>" 
+                                   class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" tabindex="-1" data-no-loading>
                                     <span class="flex items-center">
                                         <svg class="mr-2 h-4 w-4 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />

@@ -1,9 +1,9 @@
 <?php
-require_once 'config.php';
-require_once 'vendor/autoload.php';
+require_once '../../config/config.php';
+require_once '../../vendor/autoload.php';
 
 // Include TCPDF library
-require_once('vendor/tecnickcom/tcpdf/tcpdf.php');
+require_once('../../vendor/tecnickcom/tcpdf/tcpdf.php');
 
 // Set error reporting for debugging
 error_reporting(E_ALL);

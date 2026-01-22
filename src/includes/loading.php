@@ -176,11 +176,6 @@ window.addEventListener('load', function() {
     setTimeout(() => hideLoading(), 1500); // Show for 1500ms minimum
 });
 
-// Show loading on page unload (navigation)
-window.addEventListener('beforeunload', function() {
-    showLoading('Loading page...', 'Navigating');
-});
-
 // Simplified approach - attach to document immediately
 (function() {
     // Function to attach navbar link listeners
@@ -221,17 +216,28 @@ window.addEventListener('beforeunload', function() {
     
     // Also use event delegation as a backup
     document.addEventListener('click', function(e) {
+        // Find the closest anchor tag (in case user clicked on child element like span or svg)
         const link = e.target.closest('a');
         
         if (link && link.href && !link.target && !link.href.startsWith('#')) {
+            // Check for data-no-loading attribute first (most reliable)
+            if (link.hasAttribute('data-no-loading')) {
+                console.log('Link has data-no-loading attribute - skipping loading overlay');
+                return;
+            }
+            
             try {
                 const url = new URL(link.href);
                 const currentUrl = new URL(window.location.href);
                 
-                // Check if it's an export/download link
+                // Check if it's an export/download link (improved detection)
                 const isExportLink = link.hasAttribute('download') || 
                                     link.download ||
-                                    link.href.includes('export_');
+                                    link.href.includes('export_') ||
+                                    link.href.includes('.pdf') ||
+                                    link.href.includes('.xlsx') ||
+                                    link.href.includes('.xls') ||
+                                    link.href.includes('.csv');
                 
                 // Only show loading if navigating to a different page and NOT an export
                 if (url.origin === currentUrl.origin) {
@@ -240,6 +246,8 @@ window.addEventListener('beforeunload', function() {
                         console.log('Loading triggered via delegation for:', link.href);
                     } else if (isExportLink) {
                         console.log('Export/download link detected - skipping loading');
+                        // Don't show loading for exports
+                        return;
                     }
                 }
             } catch (err) {

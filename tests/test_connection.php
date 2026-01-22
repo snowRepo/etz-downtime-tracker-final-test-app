@@ -1,6 +1,6 @@
 <?php
 // Include the configuration file
-require_once 'config.php';
+require_once '../config/config.php';
 
 // Test query to fetch companies
 try {

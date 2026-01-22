@@ -4,12 +4,12 @@
  * Generates comprehensive analytics report with premium fintech styling
  */
 
-require_once 'config.php';
-require_once 'vendor/autoload.php';
-require_once 'includes/pdf_config.php';
+require_once '../../config/config.php';
+require_once '../../vendor/autoload.php';
+require_once '../includes/pdf_config.php';
 
 // Include TCPDF library
-require_once('vendor/tecnickcom/tcpdf/tcpdf.php');
+require_once('../../vendor/tecnickcom/tcpdf/tcpdf.php');
 
 // Error reporting for debugging (disable in production)
 if (APP_ENV === 'development') {

@@ -1,5 +1,5 @@
 <?php
-require_once 'config.php';
+require_once '../config/config.php';
 session_start();
 
 // Generate CSRF token if not exists
@@ -227,10 +227,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 </head>
 <body class="bg-gray-50 dark:bg-gray-900">
     <!-- Navbar -->
-    <?php include 'includes/navbar.php'; ?>
+    <?php include '../src/includes/navbar.php'; ?>
 
     <!-- Loading Overlay -->
-    <?php include 'includes/loading.php'; ?>
+    <?php include '../src/includes/loading.php'; ?>
 
     <!-- Main Content -->
     <main class="py-8">
