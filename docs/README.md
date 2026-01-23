@@ -14,8 +14,10 @@
 - [User Guide](#user-guide)
 - [Developer Guide](#developer-guide)
 - [Security Features](#security-features)
+- [Activity Logging](#activity-logging-system) ⭐ NEW
 - [XAMPP-Specific Troubleshooting](#xampp-specific-troubleshooting)
 - [General Troubleshooting](#general-troubleshooting)
+- [Additional Documentation](#additional-documentation)
 
 ---
 
@@ -25,11 +27,11 @@
 
 1. **Install XAMPP** → Download from [apachefriends.org](https://www.apachefriends.org/)
 2. **Start Services** → Open XAMPP Control Panel, start Apache & MySQL
-3. **Copy Files** → Extract this project to `C:\xampp\htdocs\etz-downtime`
+3. **Copy Files** → Extract this project to `C:\xampp\htdocs\etz-downtime-tracker-final-test-app`
 4. **Install Dependencies** → Run `composer install` in the project folder
 5. **Import Database** → Open [localhost/phpmyadmin](http://localhost/phpmyadmin), import `downtimedb.sql`
 6. **Configure** → Copy `config.php.example` to `config.php`, set DB credentials (user: `root`, password: empty)
-7. **Launch** → Visit [localhost/etz-downtime](http://localhost/etz-downtime)
+7. **Launch** → Visit [localhost/etz-downtime-tracker-final-test-app](http://localhost/etz-downtime-tracker-final-test-app)
 
 > 📖 **New to XAMPP?** See the detailed [XAMPP Installation Guide](#method-1-xampp-installation-recommended-for-windows) below.
 
@@ -101,6 +103,37 @@ The **eTranzact Downtime Tracking System** is a comprehensive web application de
 - **Excel Export**: Download SLA data in spreadsheet format
 - **PDF Export**: Professional SLA compliance reports
 
+### 6. **Activity Logging** (`admin/activity_logs.php`) ⭐ NEW
+
+- **Comprehensive Audit Trail**: Track all user actions and system events
+- **Statistics Dashboard**: View total logs, unique users, top actions, and most active users
+- **Advanced Filtering**:
+  - Date range filtering (start/end dates)
+  - User-specific filtering
+  - Action type multi-select (22 action types)
+  - Full-text search in descriptions
+- **Detailed Log Information**:
+  - User identification with avatars
+  - Color-coded action types
+  - IP address tracking
+  - User agent logging
+  - JSON metadata for context
+- **Detail Modal**: View complete log information including metadata
+- **CSV Export**: Download filtered logs for external analysis
+- **Pagination**: Configurable results per page (25/50/100)
+- **Logged Actions**:
+  - Authentication (login/logout/failed attempts)
+  - User management (create/update/delete with change tracking)
+  - Incident operations (creation/updates)
+  - Report exports (with applied filters)
+
+### 7. **Admin Panel** (`admin/`)
+
+- **User Management**: Create, edit, and delete user accounts
+- **Role-Based Access**: Admin, User, and Viewer roles
+- **Activity Monitoring**: View all system activity logs
+- **Dark Mode Support**: Consistent theme across admin pages
+
 ---
 
 ## 💻 System Requirements
@@ -139,13 +172,11 @@ This is the easiest way to get started, especially if you're new to PHP developm
 #### Step 1: Install XAMPP
 
 1. **Download XAMPP**:
-
    - Visit [https://www.apachefriends.org/](https://www.apachefriends.org/)
    - Download XAMPP for Windows (PHP 7.4 or higher)
    - Run the installer and follow the installation wizard
 
 2. **Install Components**:
-
    - Make sure to select **Apache** and **MySQL** during installation
    - Default installation path: `C:\xampp`
 
@@ -164,21 +195,19 @@ This is the easiest way to get started, especially if you're new to PHP developm
    ```
 
 2. **Option A - Download ZIP**:
-
    - Download the project as a ZIP file
-   - Extract it to `C:\xampp\htdocs\etz-downtime`
+   - Extract it to `C:\xampp\htdocs\etz-downtime-tracker-final-test-app`
 
 3. **Option B - Git Clone** (if you have Git installed):
    ```bash
    cd C:\xampp\htdocs
-   git clone <repository-url> etz-downtime
-   cd etz-downtime
+   git clone <repository-url> etz-downtime-tracker-final-test-app
+   cd etz-downtime-tracker-final-test-app
    ```
 
 #### Step 3: Install PHP Dependencies
 
 1. **Install Composer** (if not already installed):
-
    - Download from [https://getcomposer.org/download/](https://getcomposer.org/download/)
    - Run the installer
    - Restart your command prompt/terminal
@@ -187,7 +216,7 @@ This is the easiest way to get started, especially if you're new to PHP developm
    - Open Command Prompt or PowerShell
    - Navigate to the project folder:
      ```bash
-     cd C:\xampp\htdocs\etz-downtime
+     cd C:\xampp\htdocs\etz-downtime-tracker-final-test-app
      ```
    - Run Composer:
      ```bash
@@ -198,16 +227,14 @@ This is the easiest way to get started, especially if you're new to PHP developm
 #### Step 4: Create the Database
 
 1. **Open phpMyAdmin**:
-
    - In your web browser, go to: [http://localhost/phpmyadmin](http://localhost/phpmyadmin)
    - You should see the phpMyAdmin interface
 
 2. **Import the Database**:
-
    - Click on **"New"** in the left sidebar to create a new database
    - Or click on the **"Import"** tab at the top
    - Click **"Choose File"** button
-   - Navigate to `C:\xampp\htdocs\etz-downtime\downtimedb.sql`
+   - Navigate to `C:\xampp\htdocs\etz-downtime-tracker-final-test-app\downtimedb.sql`
    - Select the file and click **"Open"**
    - Scroll down and click **"Import"** button
    - Wait for the success message
@@ -225,13 +252,11 @@ This is the easiest way to get started, especially if you're new to PHP developm
 #### Step 5: Configure Database Connection
 
 1. **Create Configuration File**:
-
-   - Navigate to `C:\xampp\htdocs\etz-downtime\`
+   - Navigate to `C:\xampp\htdocs\etz-downtime-tracker-final-test-app\`
    - Find the file `config.php.example`
    - Make a copy and rename it to `config.php`
 
 2. **Edit `config.php`**:
-
    - Open `config.php` in any text editor (Notepad, VS Code, etc.)
    - Update the database credentials:
 
@@ -254,8 +279,7 @@ This is the easiest way to get started, especially if you're new to PHP developm
 #### Step 6: Access the Application
 
 1. **Open Your Browser**:
-
-   - Navigate to: [http://localhost/etz-downtime/](http://localhost/etz-downtime/)
+   - Navigate to: [http://localhost/etz-downtime-tracker-final-test-app/](http://localhost/etz-downtime-tracker-final-test-app/)
    - You should see the **Dashboard** page
 
 2. **Verify Installation**:
@@ -266,7 +290,6 @@ This is the easiest way to get started, especially if you're new to PHP developm
 #### Step 7: Test the Application
 
 1. **Report a Test Incident**:
-
    - Click **"Report Incident"** in the navbar
    - Fill in the form:
      - Your Name: `Test User`
@@ -278,7 +301,6 @@ This is the easiest way to get started, especially if you're new to PHP developm
    - You should see a success message
 
 2. **View the Incident**:
-
    - Click **"Dashboard"** to return to the homepage
    - Your test incident should appear in the "Recent Incidents" table
    - Click **"Incidents"** to see all incidents grouped by service
@@ -306,7 +328,7 @@ Ensure you have:
 
 ```bash
 git clone <repository-url>
-cd etz-downtime
+cd etz-downtime-tracker-final-test-app
 ```
 
 #### Step 3: Install Dependencies
@@ -360,7 +382,7 @@ chmod 755 includes/
 
 #### Step 7: Access the Application
 
-Navigate to your configured web server URL (e.g., `http://localhost/etz-downtime/`)
+Navigate to your configured web server URL (e.g., `http://localhost/etz-downtime-tracker-final-test-app/`)
 
 ---
 
@@ -454,6 +476,43 @@ created_at             - Timestamp
 updated_at             - Auto-updated timestamp
 ```
 
+#### `activity_logs` ⭐ NEW
+
+Comprehensive audit trail for all user actions and system events.
+
+```sql
+log_id (PK)            - Auto-increment ID (BIGINT)
+user_id (FK)           - References users (nullable for system actions)
+username               - Username at time of action (preserved even if user deleted)
+action_type            - ENUM (22 types: login, logout, user_created, incident_created, etc.)
+entity_type            - Type of entity affected (user, incident, etc.)
+entity_id              - ID of the affected entity
+description            - Human-readable description of the action
+ip_address             - IP address of the user (supports IPv4 and IPv6)
+user_agent             - Browser/client user agent string
+metadata               - JSON field for additional context data
+created_at             - Timestamp of when the action occurred
+```
+
+**Indexes**: Optimized for performance on user_id, action_type, created_at, entity, and username.
+
+#### `users` ⭐ NEW
+
+User authentication and authorization.
+
+```sql
+user_id (PK)           - Auto-increment ID
+username               - Unique username
+email                  - User email address
+password_hash          - Bcrypt hashed password
+full_name              - User's full name
+role                   - ENUM('admin', 'user', 'viewer')
+is_active              - Boolean flag for account status
+last_login             - Last login timestamp
+created_at             - Account creation timestamp
+updated_at             - Auto-updated timestamp
+```
+
 ### Database Triggers
 
 **`calculate_downtime_minutes`**: Automatically calculates downtime duration when `actual_end_time` is updated.
@@ -463,7 +522,7 @@ updated_at             - Auto-updated timestamp
 ## 📁 Application Structure
 
 ```
-etz-downtime/
+etz-downtime-tracker-final-test-app/
 ├── index.php                      # Dashboard homepage
 ├── report.php                     # Incident reporting form
 ├── incidents.php                  # Incident management page
@@ -642,33 +701,27 @@ Edit `includes/pdf_config.php` to modify:
 ### Implemented Security Measures
 
 1. **CSRF Protection**
-
    - Token generation and validation on all forms
    - Prevents cross-site request forgery attacks
 
 2. **SQL Injection Prevention**
-
    - Prepared statements with PDO
    - Parameter binding for all queries
 
 3. **XSS Protection**
-
    - `htmlspecialchars()` on all output
    - Content Security Policy headers (recommended to add)
 
 4. **Rate Limiting**
-
    - Session-based rate limiting (5 requests/minute)
    - Prevents spam and DoS attacks
 
 5. **Input Validation**
-
    - Server-side validation for all inputs
    - Length limits and type checking
    - Sanitization of user data
 
 6. **Error Handling**
-
    - Production mode hides detailed errors
    - Development mode shows full error details
    - Error logging for debugging
@@ -696,13 +749,11 @@ Edit `includes/pdf_config.php` to modify:
 **Solutions**:
 
 1. **Check if Skype is using Port 80**:
-
    - Open Skype → Tools → Options → Advanced → Connection
    - Uncheck "Use port 80 and 443 as alternatives"
    - Restart Skype
 
 2. **Check if IIS is running**:
-
    - Open Services (Win + R, type `services.msc`)
    - Find "World Wide Web Publishing Service"
    - Right-click → Stop
@@ -714,7 +765,7 @@ Edit `includes/pdf_config.php` to modify:
    - Find `Listen 80` and change to `Listen 8080`
    - Find `ServerName localhost:80` and change to `ServerName localhost:8080`
    - Save and restart Apache
-   - Access app at: `http://localhost:8080/etz-downtime/`
+   - Access app at: `http://localhost:8080/etz-downtime-tracker-final-test-app/`
 
 ### MySQL Won't Start
 
@@ -723,7 +774,6 @@ Edit `includes/pdf_config.php` to modify:
 **Solutions**:
 
 1. **Check for other MySQL installations**:
-
    - Open Task Manager (Ctrl + Shift + Esc)
    - Look for `mysqld.exe` processes
    - End any MySQL processes not from XAMPP
@@ -742,7 +792,6 @@ Edit `includes/pdf_config.php` to modify:
 **Solutions**:
 
 1. **Install Composer**:
-
    - Download from [https://getcomposer.org/download/](https://getcomposer.org/download/)
    - Run the Windows installer
    - Restart Command Prompt/PowerShell
@@ -759,7 +808,6 @@ Edit `includes/pdf_config.php` to modify:
 **Solutions**:
 
 1. **File too large**:
-
    - Edit `php.ini` in XAMPP Control Panel → Config → PHP (php.ini)
    - Find and increase these values:
      ```ini
@@ -777,7 +825,7 @@ Edit `includes/pdf_config.php` to modify:
      ```
    - Run import:
      ```bash
-     mysql -u root -p downtimedb < "C:\xampp\htdocs\etz-downtime\downtimedb.sql"
+     mysql -u root -p downtimedb < "C:\xampp\htdocs\etz-downtime-tracker-final-test-app\downtimedb.sql"
      ```
    - Press Enter (no password by default)
 
@@ -788,7 +836,6 @@ Edit `includes/pdf_config.php` to modify:
 **Solutions**:
 
 1. **Run XAMPP as Administrator**:
-
    - Right-click XAMPP Control Panel
    - Select "Run as administrator"
 
@@ -803,7 +850,6 @@ Edit `includes/pdf_config.php` to modify:
 **Solutions**:
 
 1. **Enable Error Display**:
-
    - Edit `config.php`:
      ```php
      define('APP_ENV', 'development');
@@ -811,7 +857,6 @@ Edit `includes/pdf_config.php` to modify:
    - Refresh the page to see actual errors
 
 2. **Check Apache Error Log**:
-
    - XAMPP Control Panel → Logs → Apache (error.log)
    - Look for PHP errors
 
@@ -832,7 +877,6 @@ Edit `includes/pdf_config.php` to modify:
 **Solutions**:
 
 1. **Check Internet Connection**:
-
    - Charts use CDN for Chart.js library
    - Ensure you have internet access
 
@@ -850,13 +894,12 @@ Edit `includes/pdf_config.php` to modify:
 1. **Verify Composer Dependencies**:
 
    ```bash
-   cd C:\xampp\htdocs\etz-downtime
+   cd C:\xampp\htdocs\etz-downtime-tracker-final-test-app
    composer install
    ```
 
 2. **Check vendor folder exists**:
-
-   - Verify `C:\xampp\htdocs\etz-downtime\vendor` folder exists
+   - Verify `C:\xampp\htdocs\etz-downtime-tracker-final-test-app\vendor` folder exists
    - Should contain TCPDF library
 
 3. **Enable GD Extension**:
@@ -999,3 +1042,27 @@ This application is proprietary software developed for eTranzact. All rights res
 
 **Last Updated**: January 2026  
 **Version**: 1.0.0
+
+---
+
+##  Activity Logging System
+
+The application includes a comprehensive activity logging system that tracks all user actions and system events.
+
+### Key Features
+- **Comprehensive Audit Trail**: Tracks 22 different action types
+- **Advanced Filtering**: Filter by date, user, action type, and search
+- **Statistics Dashboard**: View total logs, unique users, and top actions
+- **CSV Export**: Download filtered logs for analysis
+
+### Documentation
+See **[ACTIVITY_LOGGING.md](ACTIVITY_LOGGING.md)** for complete details.
+
+---
+
+##  Additional Documentation
+
+- **[ACTIVITY_LOGGING.md](ACTIVITY_LOGGING.md)**  NEW - Activity logging guide
+- **[TECHNICAL_DOCS.md](TECHNICAL_DOCS.md)** - Technical details
+- **[NGROK_SETUP.md](NGROK_SETUP.md)** - Remote access setup
+
