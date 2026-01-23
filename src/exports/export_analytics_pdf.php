@@ -7,6 +7,8 @@
 require_once '../../config/config.php';
 require_once '../../vendor/autoload.php';
 require_once '../includes/pdf_config.php';
+require_once '../includes/auth.php';
+require_once '../includes/activity_logger.php';
 
 // Include TCPDF library
 require_once('../../vendor/tecnickcom/tcpdf/tcpdf.php');
@@ -22,6 +24,16 @@ try {
     $endDate = $_GET['end_date'] ?? date('Y-m-d');
     $startDate = $_GET['start_date'] ?? date('Y-m-d', strtotime('-30 days'));
     $companyId = $_GET['company_id'] ?? null;
+    
+    // Log export action
+    $currentUser = getCurrentUser();
+    if ($currentUser) {
+        logExport($currentUser['user_id'], 'analytics_pdf', [
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'company_id' => $companyId
+        ]);
+    }
     
     // Validate inputs
     validateDateRange($startDate, $endDate);

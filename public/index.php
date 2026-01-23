@@ -1,6 +1,7 @@
 <?php
 require_once '../config/config.php';
-session_start();
+require_once '../src/includes/auth.php';
+requireLogin();
 
 // Get statistics and recent incidents
 try {

@@ -1,11 +1,11 @@
 <?php
 require_once '../config/config.php';
 require_once '../vendor/autoload.php';
+require_once '../src/includes/auth.php';
+requireLogin();
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-
-session_start();
 
 // Default values
 $companyId = $_GET['company_id'] ?? null;

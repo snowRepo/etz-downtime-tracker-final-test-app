@@ -1,6 +1,7 @@
 <?php
 require_once '../config/config.php';
-session_start();
+require_once '../src/includes/auth.php';
+requireLogin();
 
 // Set default date range (last 30 days including today)
 $endDate = date('Y-m-d', strtotime('+1 day')); // Include today by going to start of next day

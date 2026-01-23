@@ -1,6 +1,7 @@
 <?php
 require_once '../config/config.php';
-session_start();
+require_once '../src/includes/auth.php';
+requireLogin();
 
 // Generate CSRF token if not exists
 if (empty($_SESSION['csrf_token'])) {
@@ -172,6 +173,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             
             $pdo->commit();
             $success = true;
+            
+            // Log incident creation
+            require_once '../src/includes/activity_logger.php';
+            $currentUser = getCurrentUser();
+            if ($currentUser && isset($issue_id)) {
+                $stmt = $pdo->prepare("SELECT service_name FROM services WHERE service_id = ?");
+                $stmt->execute([$service_id]);
+                $service = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                logIncidentAction($currentUser['user_id'], 'created', $issue_id, [
+                    'service' => $service['service_name'] ?? 'Unknown',
+                    'impact_level' => $impact_level,
+                    'companies_count' => count($inserted)
+                ]);
+            }
             
         } catch (Exception $e) {
             // Rollback on error
