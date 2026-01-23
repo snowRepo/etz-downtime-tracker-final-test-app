@@ -1,6 +1,6 @@
 <?php
-require_once '../config/config.php';
-require_once '../src/includes/auth.php';
+require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/../src/includes/auth.php';
 requireLogin();
 
 // Generate CSRF token if not exists
@@ -36,9 +36,11 @@ function sanitize($data) {
     return htmlspecialchars($data, ENT_QUOTES, 'UTF-8');
 }
 
-// Fetch services and companies for dropdowns
+// Fetch services, companies, components, and types
 try {
     $services = $pdo->query("SELECT * FROM services ORDER BY service_name")->fetchAll(PDO::FETCH_ASSOC);
+    $components = $pdo->query("SELECT * FROM service_components WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+    $incidentTypes = $pdo->query("SELECT * FROM incident_types WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
     
     // Fetch all companies and sort them with 'All' first, then alphabetically
     $allCompanies = $pdo->query("SELECT * FROM companies")->fetchAll(PDO::FETCH_ASSOC);
@@ -75,30 +77,66 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 
     // Sanitize and validate inputs
-    $user_name = trim(filter_var($_POST['user_name'] ?? '', FILTER_SANITIZE_STRING));
-    $service_id = filter_var($_POST['service_id'] ?? null, FILTER_VALIDATE_INT);
+    $service_id = $_POST['service_id'] === 'all' ? 'all' : filter_var($_POST['service_id'] ?? null, FILTER_VALIDATE_INT);
+    $component_id = $_POST['component_id'] === 'all' ? 'all' : (filter_var($_POST['component_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
+    $incident_type_id = $_POST['incident_type_id'] === 'all' ? 'all' : (filter_var($_POST['incident_type_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
     $impact_level = in_array($_POST['impact_level'] ?? '', ['Low', 'Medium', 'High', 'Critical']) ? $_POST['impact_level'] : 'Low';
     $root_cause = trim(filter_var($_POST['root_cause'] ?? '', FILTER_SANITIZE_STRING));
-    $status = 'pending'; // Default status
+    $actual_start_time = $_POST['actual_start_time'] ?? date('Y-m-d H:i:s');
+    $is_planned = isset($_POST['is_planned']) ? 1 : 0;
+    $downtime_category = in_array($_POST['downtime_category'] ?? '', ['Network', 'Server', 'Maintenance', 'Third-party', 'Other']) ? $_POST['downtime_category'] : 'Other';
+    $status = 'pending';
     
     // Validate and deduplicate company IDs
     $company_ids = [];
     if (!empty($_POST['company_ids']) && is_array($_POST['company_ids'])) {
-        $temp_ids = [];
         foreach ($_POST['company_ids'] as $company_id) {
+            if ($company_id === 'all') {
+                // If 'all' is selected, get all company IDs except 'all' itself
+                $company_ids = array_map(function($c) { return $c['company_id']; }, $otherCompanies);
+                break;
+            }
             $company_id = filter_var($company_id, FILTER_VALIDATE_INT);
-            if ($company_id && !in_array($company_id, $temp_ids)) {
-                $temp_ids[] = $company_id;
+            if ($company_id) {
+                $company_ids[] = $company_id;
             }
         }
-        $company_ids = array_values(array_unique($temp_ids));
+        $company_ids = array_values(array_unique($company_ids));
     }
     
+    // Handle file upload
+    $attachment_path = null;
+    if (isset($_FILES['evidence']) && $_FILES['evidence']['error'] === UPLOAD_ERR_OK) {
+        $fileTmpPath = $_FILES['evidence']['tmp_name'];
+        $fileName = $_FILES['evidence']['name'];
+        $fileSize = $_FILES['evidence']['size'];
+        $fileType = $_FILES['evidence']['type'];
+        $fileNameCmps = explode(".", $fileName);
+        $fileExtension = strtolower(end($fileNameCmps));
+
+        // Sanitize file name
+        $newFileName = md5(time() . $fileName) . '.' . $fileExtension;
+
+        // Allowed file extensions
+        $allowedfileExtensions = array('jpg', 'gif', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx');
+
+        if (in_array($fileExtension, $allowedfileExtensions)) {
+            // Directory in which the uploaded file will be moved
+            $uploadFileDir = __DIR__ . '/uploads/incidents/';
+            $dest_path = $uploadFileDir . $newFileName;
+
+            if (move_uploaded_file($fileTmpPath, $dest_path)) {
+                $attachment_path = 'uploads/incidents/' . $newFileName;
+            } else {
+                $errors[] = 'There was some error moving the file to upload directory. Please make sure the upload directory is writable by web server.';
+            }
+        } else {
+            $errors[] = 'Upload failed. Allowed file types: ' . implode(',', $allowedfileExtensions);
+        }
+    }
+
     // Validation
     $errors = [];
-    if (empty($user_name) || strlen($user_name) > 100) {
-        $errors[] = "Please enter a valid name (max 100 characters).";
-    }
     if (empty($service_id)) {
         $errors[] = "Please select a service.";
     }
@@ -117,77 +155,66 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $success = false;
         
         try {
-            // Create an incident for each selected company
-            $inserted = [];
-            foreach ($company_ids as $company_id) {
-                // Check if this exact combination already exists to prevent duplicates
-                $check_sql = "SELECT COUNT(*) as count FROM issues_reported 
-                             WHERE user_name = :user_name 
-                             AND service_id = :service_id 
-                             AND company_id = :company_id 
-                             AND root_cause = :root_cause 
-                             AND created_at > DATE_SUB(NOW(), INTERVAL 1 MINUTE)";
-                
-                $check_stmt = $pdo->prepare($check_sql);
-                $check_stmt->execute([
-                    ':user_name' => $user_name,
-                    ':service_id' => $service_id,
-                    ':company_id' => $company_id,
-                    ':root_cause' => $root_cause
-                ]);
-                
-                $exists = $check_stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0;
-                
-                if (!$exists) {
-                    $sql = "INSERT INTO issues_reported 
-                            (user_name, service_id, company_id, root_cause, impact_level, status) 
-                            VALUES (:user_name, :service_id, :company_id, :root_cause, :impact_level, :status)";
-                    
-                    $stmt = $pdo->prepare($sql);
-                    $stmt->execute([
-                        ':user_name' => $user_name,
-                        ':service_id' => $service_id,
-                        ':company_id' => $company_id,
-                        ':root_cause' => $root_cause,
-                        ':impact_level' => $impact_level,
-                        ':status' => $status
-                    ]);
-                    $issue_id = $pdo->lastInsertId();
-                    
-                    // Insert into downtime_incidents table
-                    $downtime_sql = "INSERT INTO downtime_incidents 
-                                    (issue_id, actual_start_time, is_planned, downtime_category)
-                                    VALUES (:issue_id, NOW(), 0, 'Other')";
-                    $downtime_stmt = $pdo->prepare($downtime_sql);
-                    $downtime_stmt->execute([
-                        ':issue_id' => $issue_id
-                    ]);
-                    
-                    $inserted[] = $company_id;
-                }
-            }
+            // Handle expansion
+            $service_ids = ($service_id === 'all') ? array_map(function($s) { return $s['service_id']; }, $services) : [$service_id];
             
-            if (empty($inserted)) {
-                throw new Exception("No new incidents were created. These incidents may have been recently reported.");
+            foreach ($service_ids as $s_id) {
+                // For components and types, we don't expand into multiple incidents.
+                // Instead, we use NULL to represent "All" or "Any" as per the schema.
+                $c_id = ($component_id === 'all') ? null : $component_id;
+                $t_id = ($incident_type_id === 'all') ? null : $incident_type_id;
+
+                // 1. Insert into incidents table
+                $sql = "INSERT INTO incidents 
+                        (service_id, component_id, incident_type_id, impact_level, root_cause, attachment_path, status, reported_by) 
+                        VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :root_cause, :attachment_path, :status, :reported_by)";
+                
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute([
+                    ':service_id' => $s_id,
+                    ':component_id' => $c_id,
+                    ':incident_type_id' => $t_id,
+                    ':impact_level' => $impact_level,
+                    ':root_cause' => $root_cause,
+                    ':attachment_path' => $attachment_path,
+                    ':status' => $status,
+                    ':reported_by' => $_SESSION['user_id']
+                ]);
+                $incident_id = $pdo->lastInsertId();
+                
+                // 2. Insert affected companies
+                $iac_sql = "INSERT INTO incident_affected_companies (incident_id, company_id) VALUES (:incident_id, :company_id)";
+                $iac_stmt = $pdo->prepare($iac_sql);
+                foreach ($company_ids as $co_id) {
+                    $iac_stmt->execute([
+                        ':incident_id' => $incident_id,
+                        ':company_id' => $co_id
+                    ]);
+                }
+                
+                // 3. Insert into downtime_incidents table
+                $downtime_sql = "INSERT INTO downtime_incidents 
+                                (incident_id, actual_start_time, is_planned, downtime_category)
+                                VALUES (:incident_id, :actual_start_time, :is_planned, :downtime_category)";
+                $downtime_stmt = $pdo->prepare($downtime_sql);
+                $downtime_stmt->execute([
+                    ':incident_id' => $incident_id,
+                    ':actual_start_time' => $actual_start_time,
+                    ':is_planned' => $is_planned,
+                    ':downtime_category' => $downtime_category
+                ]);
             }
             
             $pdo->commit();
             $success = true;
             
             // Log incident creation
-            require_once '../src/includes/activity_logger.php';
-            $currentUser = getCurrentUser();
-            if ($currentUser && isset($issue_id)) {
-                $stmt = $pdo->prepare("SELECT service_name FROM services WHERE service_id = ?");
-                $stmt->execute([$service_id]);
-                $service = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                logIncidentAction($currentUser['user_id'], 'created', $issue_id, [
-                    'service' => $service['service_name'] ?? 'Unknown',
-                    'impact_level' => $impact_level,
-                    'companies_count' => count($inserted)
-                ]);
-            }
+            require_once __DIR__ . '/../src/includes/activity_logger.php';
+            logIncidentAction($_SESSION['user_id'], 'created_multiple', null, [
+                'services_count' => count($service_ids),
+                'impact_level' => $impact_level,
+                'companies_count' => count($company_ids)
+            ]);
             
         } catch (Exception $e) {
             // Rollback on error
@@ -243,10 +270,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 </head>
 <body class="bg-gray-50 dark:bg-gray-900">
     <!-- Navbar -->
-    <?php include '../src/includes/navbar.php'; ?>
+    <?php include __DIR__ . '/../src/includes/navbar.php'; ?>
 
     <!-- Loading Overlay -->
-    <?php include '../src/includes/loading.php'; ?>
+    <?php include __DIR__ . '/../src/includes/loading.php'; ?>
 
     <!-- Main Content -->
     <main class="py-8">
@@ -288,69 +315,87 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <?php unset($_SESSION['success']); ?>
                 <?php endif; ?>
 
-                <form action="report.php" method="POST" class="px-6 pb-8 pt-6 sm:px-8 space-y-6">
+                <form action="report.php" method="POST" enctype="multipart/form-data" class="px-6 pb-8 pt-6 sm:px-8 space-y-6"
+                      x-data="{ 
+                        fileName: '', 
+                        filePreview: null,
+                        handleFileChange(event) {
+                            const file = event.target.files[0];
+                            this.fileName = file ? file.name : '';
+                            if (file && file.type.startsWith('image/')) {
+                                const reader = new FileReader();
+                                reader.onload = (e) => { this.filePreview = e.target.result; };
+                                reader.readAsDataURL(file);
+                            } else {
+                                this.filePreview = null;
+                            }
+                        }
+                      }">
                     <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                     
-                    <!-- Reporter Name -->
+                    <!-- Reporter Info (Read Only) -->
                     <div>
-                        <label for="user_name" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            Your Name <span class="text-red-600">*</span>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Reporter
                         </label>
                         <input type="text" 
-                               name="user_name" 
-                               id="user_name" 
-                               required
-                               class="form-input block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-150"
-                               placeholder="Enter your full name"
-                               value="<?php echo isset($_POST['user_name']) ? sanitize($_POST['user_name']) : ''; ?>">
+                               value="<?= htmlspecialchars($_SESSION['full_name']) ?>" 
+                               readonly
+                               class="bg-gray-100 dark:bg-gray-600 rounded-lg py-2.5 px-3.5 text-sm text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-500 w-full cursor-not-allowed">
                     </div>
 
-                    <!-- Service Selection -->
-                    <div>
-                        <label for="service_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Service Affected <span class="text-red-500">*</span>
-                        </label>
-                        <div class="mt-1 relative">
-                            <button type="button" id="service-dropdown-button" class="relative w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm pl-3 pr-10 py-2 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-gray-900 dark:text-white">
-                                <span id="service-selected-text" class="block truncate">Select service...</span>
-                                <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                                    <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                        <path fill-rule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                    </svg>
-                                </span>
-                            </button>
-                            <div id="service-dropdown" class="hidden absolute z-10 mt-1 w-full bg-white dark:bg-gray-700 shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 dark:ring-gray-600 overflow-auto focus:outline-none sm:text-sm">
+                    <!-- Service, Component, Type Row -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- Service Selection -->
+                        <div>
+                            <label for="service_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Service Affected <span class="text-red-500">*</span>
+                            </label>
+                            <select name="service_id" id="service_id" required onchange="filterDetails()"
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <option value="">Select service...</option>
+                                <option value="all" <?= (isset($_POST['service_id']) && $_POST['service_id'] === 'all') ? 'selected' : '' ?>>All Services</option>
                                 <?php foreach ($services as $service): ?>
-                                    <div class="flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600">
-                                        <input type="radio" 
-                                               id="service-<?php echo $service['service_id']; ?>" 
-                                               name="service_id" 
-                                               value="<?php echo $service['service_id']; ?>"
-                                               class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                                               <?php echo (isset($_POST['service_id']) && $_POST['service_id'] == $service['service_id']) ? 'checked' : ''; ?>>
-                                        <label for="service-<?php echo $service['service_id']; ?>" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                                            <?php echo htmlspecialchars($service['service_name']); ?>
-                                        </label>
-                                    </div>
+                                    <option value="<?= $service['service_id'] ?>" <?= (isset($_POST['service_id']) && $_POST['service_id'] == $service['service_id']) ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($service['service_name']) ?>
+                                    </option>
                                 <?php endforeach; ?>
-                            </div>
-                            <div id="selected-service" class="mt-2 flex flex-wrap gap-2">
-                                <?php if (isset($_POST['service_id'])): 
-                                    $selected_id = $_POST['service_id'];
-                                    $selected_service = array_filter($services, function($service) use ($selected_id) {
-                                        return $service['service_id'] == $selected_id;
-                                    });
-                                    $selected_service = reset($selected_service);
-                                    if ($selected_service): ?>
-                                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                            <?php echo htmlspecialchars($selected_service['service_name']); ?>
-                                            <input type="hidden" name="service_id" value="<?php echo $selected_service['service_id']; ?>">
-                                        </span>
-                                    <?php endif; 
-                                endif; ?>
-                            </div>
+                            </select>
                         </div>
-                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Select the affected service</p>
+
+                        <!-- Component Selection -->
+                        <div>
+                            <label for="component_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Component Affected
+                            </label>
+                            <select name="component_id" id="component_id"
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <option value="">Select component...</option>
+                                <option value="all" class="component-option">All Components</option>
+                                <?php foreach ($components as $component): ?>
+                                    <option value="<?= $component['component_id'] ?>" data-service="<?= $component['service_id'] ?>" class="component-option hidden">
+                                        <?= htmlspecialchars($component['name']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <!-- Incident Type Selection -->
+                        <div>
+                            <label for="incident_type_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Incident Type
+                            </label>
+                            <select name="incident_type_id" id="incident_type_id"
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <option value="">Select type...</option>
+                                <option value="all" class="type-option">All Incident Types</option>
+                                <?php foreach ($incidentTypes as $type): ?>
+                                    <option value="<?= $type['type_id'] ?>" data-service="<?= $type['service_id'] ?>" class="type-option hidden">
+                                        <?= htmlspecialchars($type['name']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
                     </div>
 
                     <!-- Companies Affected -->
@@ -411,34 +456,79 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Click to select multiple companies</p>
                     </div>
 
-                    <!-- Impact Level -->
-                    <div>
-                        <span class="block text-sm font-medium text-gray-700 dark:text-gray-300">Impact Level <span class="text-red-500">*</span></span>
-                        <div class="mt-2 space-y-2">
-                            <div class="flex items-center">
-                                <input id="impact-low" name="impact_level" type="radio" value="Low" 
-                                    class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300"
-                                    <?php echo (!isset($_POST['impact_level']) || (isset($_POST['impact_level']) && $_POST['impact_level'] === 'Low')) ? 'checked' : ''; ?>>
-                                <label for="impact-low" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                                    Low - Minor impact, workaround available
-                                </label>
+                    <!-- File Upload -->
+                    <div class="space-y-2">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Evidence / Attachment
+                        </label>
+                        <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md hover:border-blue-400 dark:hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-700/50">
+                            <div class="space-y-1 text-center">
+                                <template x-if="!filePreview">
+                                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                    </svg>
+                                </template>
+                                <template x-if="filePreview">
+                                    <div class="relative inline-block">
+                                        <img :src="filePreview" class="mx-auto h-48 w-auto rounded-lg shadow-sm object-cover">
+                                        <button @click="filePreview = null; fileName = ''; $refs.fileInput.value = ''" type="button" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 focus:outline-none">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                </template>
+                                <div class="flex text-sm text-gray-600 dark:text-gray-400">
+                                    <label for="evidence" class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 px-2 py-0.5 border border-blue-600/20">
+                                        <span>Upload a file</span>
+                                        <input id="evidence" name="evidence" type="file" class="sr-only" x-ref="fileInput" @change="handleFileChange">
+                                    </label>
+                                    <p class="pl-1">or drag and drop</p>
+                                </div>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">
+                                    PNG, JPG, GIF, PDF, DOC up to 10MB
+                                </p>
+                                <p x-show="fileName" x-text="fileName" class="text-sm font-medium text-blue-600 dark:text-blue-400 transition-all"></p>
                             </div>
-                            <div class="flex items-center">
-                                <input id="impact-medium" name="impact_level" type="radio" value="Medium" 
-                                    class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300"
-                                    <?php echo (isset($_POST['impact_level']) && $_POST['impact_level'] === 'Medium') ? 'checked' : ''; ?>>
-                                <label for="impact-medium" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                                    Medium - Significant impact, workaround may exist
-                                </label>
-                            </div>
-                            <div class="flex items-center">
-                                <input id="impact-high" name="impact_level" type="radio" value="High" 
-                                    class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300"
-                                    <?php echo (isset($_POST['impact_level']) && $_POST['impact_level'] === 'High') ? 'checked' : ''; ?>>
-                                <label for="impact-high" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                                    High - Critical impact, no workaround available
-                                </label>
-                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Impact, Category, Planned Row -->
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- Impact Level -->
+                        <div>
+                            <label for="impact_level" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Impact Level <span class="text-red-500">*</span>
+                            </label>
+                            <select name="impact_level" id="impact_level" required
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <option value="Low">Low</option>
+                                <option value="Medium">Medium</option>
+                                <option value="High">High</option>
+                                <option value="Critical">Critical</option>
+                            </select>
+                        </div>
+
+                        <!-- Category -->
+                        <div>
+                            <label for="downtime_category" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Downtime Category
+                            </label>
+                            <select name="downtime_category" id="downtime_category"
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <option value="Network">Network</option>
+                                <option value="Server">Server</option>
+                                <option value="Maintenance">Maintenance</option>
+                                <option value="Third-party">Third-party</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+
+                        <!-- Planned -->
+                        <div class="flex items-center mt-8">
+                            <input id="is_planned" name="is_planned" type="checkbox"
+                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            <label for="is_planned" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Is this a planned maintenance?
+                            </label>
                         </div>
                     </div>
 
@@ -560,53 +650,36 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 updateSelectedCompanies();
             }
             
-            // Service dropdown functionality
-            const serviceDropdownButton = document.getElementById('service-dropdown-button');
-            const serviceDropdown = document.getElementById('service-dropdown');
-            const serviceRadios = document.querySelectorAll('input[name="service_id"]');
-            
-            serviceDropdownButton.addEventListener('click', function() {
-                serviceDropdown.classList.toggle('hidden');
-            });
-            
-            // Close dropdown when clicking outside
-            document.addEventListener('click', function(event) {
-                if (!serviceDropdownButton.contains(event.target) && !serviceDropdown.contains(event.target)) {
-                    serviceDropdown.classList.add('hidden');
-                }
-            });
-            
-            // Update selected service when radio changes
-            document.addEventListener('change', function(event) {
-                if (event.target.matches('input[name="service_id"]')) {
-                    updateSelectedService();
-                    serviceDropdown.classList.add('hidden');
-                }
-            });
-            
-            // Initialize selected service on page load
-            updateSelectedService();
-            
-            // Update selected service display
-            function updateSelectedService() {
-                const selectedServiceDiv = document.getElementById('selected-service');
-                const selectedRadio = document.querySelector('input[name="service_id"]:checked');
+            // Service details filtering
+            window.filterDetails = function() {
+                const serviceId = document.getElementById('service_id').value;
+                const componentId = document.getElementById('component_id');
+                const incidentTypeId = document.getElementById('incident_type_id');
                 
-                if (selectedRadio) {
-                    const serviceName = selectedRadio.nextElementSibling.textContent.trim();
-                    document.getElementById('service-selected-text').textContent = serviceName;
-                    
-                    // Update the selected service display
-                    selectedServiceDiv.innerHTML = `
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                            ${serviceName}
-                            <input type="hidden" name="service_id" value="${selectedRadio.value}">
-                        </span>
-                    `;
-                } else {
-                    document.getElementById('service-selected-text').textContent = 'Select service...';
-                    selectedServiceDiv.innerHTML = '';
-                }
+                // Reset and hide all
+                componentId.value = '';
+                incidentTypeId.value = '';
+                
+                document.querySelectorAll('.component-option').forEach(opt => {
+                    if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
+                        opt.classList.remove('hidden');
+                    } else {
+                        opt.classList.add('hidden');
+                    }
+                });
+                
+                document.querySelectorAll('.type-option').forEach(opt => {
+                    if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
+                        opt.classList.remove('hidden');
+                    } else {
+                        opt.classList.add('hidden');
+                    }
+                });
+            };
+            
+            // Trigger on load if service is pre-selected
+            if (document.getElementById('service_id').value) {
+                filterDetails();
             }
         });
     </script>

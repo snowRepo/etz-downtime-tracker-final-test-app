@@ -1,6 +1,6 @@
 <?php
-require_once '../../config/config.php';
-require_once '../../src/includes/auth.php';
+require_once __DIR__ . '/../../config/config.php';
+require_once __DIR__ . '/../../src/includes/auth.php';
 requireLogin();
 requireRole('admin');
 
@@ -29,7 +29,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $full_name = trim($_POST['full_name'] ?? '');
     $role = $_POST['role'] ?? 'user';
     $is_active = isset($_POST['is_active']) ? 1 : 0;
-    $new_password = $_POST['new_password'] ?? '';
     
     // Validation
     if (empty($email)) $errors[] = 'Email is required';
@@ -40,13 +39,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Cannot change your own role';
     }
     
-    // Validate password if provided
-    if ($new_password) {
-        $passwordValidation = validatePassword($new_password);
-        if (!$passwordValidation['valid']) {
-            $errors = array_merge($errors, $passwordValidation['errors']);
-        }
-    }
     
     // Update user
     if (!$errors) {
@@ -57,27 +49,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($full_name !== $user['full_name']) $changes['full_name'] = ['from' => $user['full_name'], 'to' => $full_name];
             if ($role !== $user['role']) $changes['role'] = ['from' => $user['role'], 'to' => $role];
             if ($is_active != $user['is_active']) $changes['is_active'] = ['from' => (bool)$user['is_active'], 'to' => (bool)$is_active];
-            if ($new_password) $changes['password'] = 'changed';
             
-            if ($new_password) {
-                $password_hash = password_hash($new_password, PASSWORD_DEFAULT);
-                $stmt = $pdo->prepare("
-                    UPDATE users 
-                    SET email = ?, full_name = ?, role = ?, is_active = ?, password_hash = ?
-                    WHERE user_id = ?
-                ");
-                $stmt->execute([$email, $full_name, $role, $is_active, $password_hash, $userId]);
-            } else {
-                $stmt = $pdo->prepare("
-                    UPDATE users 
-                    SET email = ?, full_name = ?, role = ?, is_active = ?
-                    WHERE user_id = ?
-                ");
-                $stmt->execute([$email, $full_name, $role, $is_active, $userId]);
-            }
+            $changed_password = ($role === 'admin') ? 1 : $user['changed_password'];
+            
+            $stmt = $pdo->prepare("
+                UPDATE users 
+                SET email = ?, full_name = ?, role = ?, is_active = ?, changed_password = ?
+                WHERE user_id = ?
+            ");
+            $stmt->execute([$email, $full_name, $role, $is_active, $changed_password, $userId]);
             
             // Log user update
-            require_once '../../src/includes/activity_logger.php';
+            require_once __DIR__ . '/../../src/includes/activity_logger.php';
             logUserAction($_SESSION['user_id'], 'updated', $userId, $changes);
             
             $_SESSION['message'] = ['type' => 'success', 'text' => 'User updated successfully'];
@@ -104,8 +87,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <style>* { font-family: 'Inter', sans-serif; }</style>
 </head>
 <body class="bg-gray-50 dark:bg-gray-900" x-data="{ showPassword: false }">
-    <?php include '../../src/includes/admin_navbar.php'; ?>
-    <?php include '../../src/includes/loading.php'; ?>
+    <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
+    <?php include __DIR__ . '/../../src/includes/loading.php'; ?>
     
     <main class="py-8">
         <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -153,17 +136,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
 
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">New Password (leave blank to keep current)</label>
-                        <div class="relative">
-                            <input :type="showPassword ? 'text' : 'password'" name="new_password"
-                                   class="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                            <button type="button" @click="showPassword = !showPassword"
-                                    class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
-                                <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
-                            </button>
-                        </div>
-                    </div>
 
                     <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
                         <div>
