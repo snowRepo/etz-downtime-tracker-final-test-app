@@ -196,7 +196,15 @@ $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER B
     </style>
 </head>
 
-<body class="bg-gray-50 dark:bg-gray-900">
+<body class="relative min-h-screen">
+    <!-- Background Image with Overlay -->
+    <div class="fixed inset-0 z-0">
+        <img src="<?= url('../src/assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-white/90 dark:bg-gray-900/95"></div>
+    </div>
+
+    <!-- Content Wrapper -->
+    <div class="relative z-10">
     <!-- Navbar -->
     <?php include __DIR__ . '/../src/includes/navbar.php'; ?>
 
@@ -682,6 +690,7 @@ $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER B
         </div>
     </main>
 
+    </div> <!-- End Content Wrapper -->
 </body>
 
 </html>

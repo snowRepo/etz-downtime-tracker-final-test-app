@@ -64,7 +64,15 @@ try {
     </style>
 </head>
 
-<body class="bg-gray-50 dark:bg-gray-900">
+<body class="relative min-h-screen">
+    <!-- Background Image with Overlay -->
+    <div class="fixed inset-0 z-0">
+        <img src="<?= url('../../src/assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-white/90 dark:bg-gray-900/95"></div>
+    </div>
+
+    <!-- Content Wrapper -->
+    <div class="relative z-10">
     <!-- Navbar -->
     <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
 
@@ -76,19 +84,19 @@ try {
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <!-- Page Header -->
             <div class="mb-8">
-                <div class="flex items-center justify-between">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
                         <h1 class="text-2xl font-bold text-gray-900 dark:text-white sm:text-3xl">Admin Dashboard</h1>
                         <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Manage users and system settings</p>
                     </div>
-                    <div class="flex items-center space-x-3">
+                    <div class="flex flex-col sm:flex-row gap-3">
                         <a href="activity_logs.php"
-                            class="inline-flex items-center px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                            class="inline-flex items-center justify-center px-4 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                             <i class="fas fa-history mr-2"></i>
                             Activity Logs
                         </a>
                         <a href="users.php"
-                            class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+                            class="inline-flex items-center justify-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
                             <i class="fas fa-users mr-2"></i>
                             Manage Users
                         </a>
@@ -242,6 +250,7 @@ try {
             </div>
         </div>
     </main>
+    </div> <!-- End Content Wrapper -->
 </body>
 
 </html>

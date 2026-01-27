@@ -91,7 +91,15 @@ $actionTypes = [
     </style>
 </head>
 
-<body class="bg-gray-50 dark:bg-gray-900" x-data="{ showFilters: true, detailModal: null }">
+<body class="relative min-h-screen">
+    <!-- Background Image with Overlay -->
+    <div class="fixed inset-0 z-0">
+        <img src="<?= url('../../src/assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-white/90 dark:bg-gray-900/95"></div>
+    </div>
+
+    <!-- Content Wrapper -->
+    <div class="relative z-10" x-data="{ showFilters: true, detailModal: null }">
     <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
     <?php include __DIR__ . '/../../src/includes/loading.php'; ?>
 
@@ -260,17 +268,17 @@ $actionTypes = [
                     </div>
 
                     <!-- Filter Actions -->
-                    <div class="mt-4 flex items-center space-x-3">
+                    <div class="mt-4 flex flex-col sm:flex-row gap-3">
                         <button type="submit"
-                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg">
+                            class="inline-flex items-center justify-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
                             <i class="fas fa-search mr-2"></i>Apply Filters
                         </button>
                         <a href="activity_logs.php"
-                            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                            class="inline-flex items-center justify-center px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                             <i class="fas fa-times mr-2"></i>Clear
                         </a>
                         <a href="?<?= http_build_query(array_merge($_GET, ['export' => 'csv'])) ?>"
-                            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                            class="inline-flex items-center justify-center px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                             <i class="fas fa-download mr-2"></i>Export CSV
                         </a>
                     </div>
@@ -494,6 +502,7 @@ $actionTypes = [
             </div>
         </div>
     </div>
+    </div> <!-- End Content Wrapper -->
 </body>
 
 </html>

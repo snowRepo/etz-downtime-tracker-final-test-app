@@ -70,13 +70,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </style>
 </head>
 
-<body class="bg-gray-50 dark:bg-gray-900" x-data="{ darkMode: false, showPassword: false }" x-init="
+<body class="relative min-h-screen bg-gray-50 dark:bg-gray-900" x-data="{ darkMode: false, showPassword: false }" x-init="
     darkMode = localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
     if (darkMode) {
         document.documentElement.classList.add('dark');
     }
 ">
-    <div class="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <!-- Background Image with Overlay -->
+    <div class="absolute inset-0 z-0">
+        <img src="<?= url('../src/assets/bg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-gradient-to-br from-white-900/80 via-white-800/70 to-white-900/80 dark:from-gray-900/90 dark:via-blue-900/80 dark:to-gray-900/90"></div>
+    </div>
+
+    <div class="relative z-10 min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
         <div class="max-w-md w-full space-y-8">
             <!-- Logo and Header -->
             <div class="text-center">

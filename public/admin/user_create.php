@@ -15,6 +15,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $confirm_password = $_POST['confirm_password'] ?? '';
     $role = $_POST['role'] ?? 'user';
     $is_active = isset($_POST['is_active']) ? 1 : 0;
+    
+    // Default password if not provided
+    $defaultPassword = 'Etz@1234566';
+    
+    // Use default password if no password is provided
+    if (empty($password)) {
+        $password = $defaultPassword;
+        $confirm_password = $defaultPassword;
+    }
 
     // Validation
     if (empty($username))
@@ -23,13 +32,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Email is required';
     if (empty($full_name))
         $errors[] = 'Full name is required';
-    if (empty($password))
-        $errors[] = 'Password is required';
     if ($password !== $confirm_password)
         $errors[] = 'Passwords do not match';
 
-    // Validate password strength
-    if ($password) {
+    // Validate password strength (only if custom password is provided)
+    if ($password && $password !== $defaultPassword) {
         $passwordValidation = validatePassword($password);
         if (!$passwordValidation['valid']) {
             $errors = array_merge($errors, $passwordValidation['errors']);
@@ -101,7 +108,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </style>
 </head>
 
-<body class="bg-gray-50 dark:bg-gray-900" x-data="{ showPassword: false, showConfirmPassword: false }">
+<body class="relative min-h-screen">
+    <!-- Background Image with Overlay -->
+    <div class="fixed inset-0 z-0">
+        <img src="<?= url('../../src/assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-white/90 dark:bg-gray-900/95"></div>
+    </div>
+
+    <!-- Content Wrapper -->
+    <div class="relative z-10" x-data="{ showPassword: false, showConfirmPassword: false }">
     <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
     <?php include __DIR__ . '/../../src/includes/loading.php'; ?>
 
@@ -160,31 +175,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password
-                                *</label>
+                                (Optional)</label>
                             <div class="relative">
-                                <input :type="showPassword ? 'text' : 'password'" name="password" required
+                                <input :type="showPassword ? 'text' : 'password'" name="password"
+                                    placeholder="Leave blank for default"
                                     class="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                                 <button type="button" @click="showPassword = !showPassword"
                                     class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
                                     <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
                                 </button>
                             </div>
-                            <p class="mt-1 text-xs text-gray-500">Min 8 chars, uppercase, lowercase, number, special
-                                char</p>
+                            <p class="mt-1 text-xs text-gray-500">Default: <span class="font-mono font-semibold">Etz@1234566</span></p>
                         </div>
 
                         <div>
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Confirm
-                                Password *</label>
+                                Password (Optional)</label>
                             <div class="relative">
                                 <input :type="showConfirmPassword ? 'text' : 'password'" name="confirm_password"
-                                    required
+                                    placeholder="Leave blank for default"
                                     class="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                                 <button type="button" @click="showConfirmPassword = !showConfirmPassword"
                                     class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
                                     <i :class="showConfirmPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
                                 </button>
                             </div>
+                            <p class="mt-1 text-xs text-gray-500">User must change on first login</p>
                         </div>
                     </div>
 
@@ -194,7 +210,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 *</label>
                             <select name="role"
                                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                                <option value="viewer">Viewer</option>
                                 <option value="user" selected>User</option>
                                 <option value="admin">Admin</option>
                             </select>
@@ -210,13 +225,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
 
                     <div
-                        class="flex items-center justify-end space-x-3 pt-6 border-t border-gray-200 dark:border-gray-700">
+                        class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-6 border-t border-gray-200 dark:border-gray-700">
                         <a href="users.php"
-                            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+                            class="inline-flex items-center justify-center px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                             Cancel
                         </a>
                         <button type="submit"
-                            class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg">
+                            class="inline-flex items-center justify-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
                             <i class="fas fa-save mr-2"></i>Create User
                         </button>
                     </div>
@@ -224,6 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
     </main>
+    </div> <!-- End Content Wrapper -->
 </body>
 
 </html>

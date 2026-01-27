@@ -99,20 +99,28 @@ $users = $stmt->fetchAll();
     </style>
 </head>
 
-<body class="bg-gray-50 dark:bg-gray-900">
+<body class="relative min-h-screen">
+    <!-- Background Image with Overlay -->
+    <div class="fixed inset-0 z-0">
+        <img src="<?= url('../../src/assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-white/90 dark:bg-gray-900/95"></div>
+    </div>
+
+    <!-- Content Wrapper -->
+    <div class="relative z-10">
     <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
     <?php include __DIR__ . '/../../src/includes/loading.php'; ?>
 
     <main class="py-8">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <!-- Header -->
-            <div class="mb-8 flex items-center justify-between">
+            <div class="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-gray-900 dark:text-white sm:text-3xl">User Management</h1>
                     <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Manage system users and permissions</p>
                 </div>
                 <a href="user_create.php"
-                    class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+                    class="inline-flex items-center justify-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
                     <i class="fas fa-plus mr-2"></i>Create User
                 </a>
             </div>
@@ -130,35 +138,37 @@ $users = $stmt->fetchAll();
 
             <!-- Filters -->
             <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-4 mb-6">
-                <form method="GET" class="flex flex-wrap gap-4">
-                    <div class="flex-1 min-w-[200px]">
+                <form method="GET" class="space-y-3 sm:space-y-0 sm:grid sm:grid-cols-2 lg:grid-cols-5 sm:gap-3">
+                    <div class="sm:col-span-2">
                         <input type="text" name="search" value="<?= htmlspecialchars($search) ?>"
                             placeholder="Search users..."
-                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            class="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
                     <select name="role"
-                        class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                        class="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                         <option value="">All Roles</option>
                         <option value="admin" <?= $roleFilter === 'admin' ? 'selected' : '' ?>>Admin</option>
                         <option value="user" <?= $roleFilter === 'user' ? 'selected' : '' ?>>User</option>
                         <option value="viewer" <?= $roleFilter === 'viewer' ? 'selected' : '' ?>>Viewer</option>
                     </select>
                     <select name="status"
-                        class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                        class="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                         <option value="">All Status</option>
                         <option value="1" <?= $statusFilter === '1' ? 'selected' : '' ?>>Active</option>
                         <option value="0" <?= $statusFilter === '0' ? 'selected' : '' ?>>Inactive</option>
                     </select>
-                    <button type="submit"
-                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
-                        <i class="fas fa-search mr-2"></i>Filter
-                    </button>
-                    <?php if ($search || $roleFilter || $statusFilter !== ''): ?>
-                        <a href="users.php"
-                            class="px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors">
-                            Clear
-                        </a>
-                    <?php endif; ?>
+                    <div class="flex gap-3 sm:col-span-2 lg:col-span-1">
+                        <button type="submit"
+                            class="flex-1 sm:flex-none px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium">
+                            <i class="fas fa-search mr-2"></i>Filter
+                        </button>
+                        <?php if ($search || $roleFilter || $statusFilter !== ''): ?>
+                            <a href="users.php"
+                                class="flex-1 sm:flex-none px-4 py-2.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg transition-colors text-center font-medium">
+                                Clear
+                            </a>
+                        <?php endif; ?>
+                    </div>
                 </form>
             </div>
 
@@ -219,9 +229,9 @@ $users = $stmt->fetchAll();
                                         <?= $user['last_login'] ? date('M j, Y', strtotime($user['last_login'])) : 'Never' ?>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <div class="flex justify-end space-x-2">
+                                        <div class="flex flex-col sm:flex-row justify-end gap-2">
                                             <a href="user_edit.php?id=<?= $user['user_id'] ?>"
-                                                class="inline-flex items-center px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-semibold rounded-lg transition-colors">
+                                                class="inline-flex items-center justify-center px-3 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-semibold rounded-lg transition-colors min-h-[44px] sm:min-h-0">
                                                 <i class="fas fa-edit mr-1"></i> Edit
                                             </a>
 
@@ -232,7 +242,7 @@ $users = $stmt->fetchAll();
                                                     <input type="hidden" name="new_status"
                                                         value="<?= $user['is_active'] ? 0 : 1 ?>">
                                                     <button type="submit"
-                                                        class="inline-flex items-center px-3 py-1 text-xs font-semibold rounded-lg transition-colors 
+                                                        class="inline-flex items-center justify-center px-3 py-2 text-xs font-semibold rounded-lg transition-colors min-h-[44px] sm:min-h-0 w-full sm:w-auto
                                                         <?= $user['is_active'] ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-green-100 text-green-700 hover:bg-green-200' ?>">
                                                         <i
                                                             class="fas <?= $user['is_active'] ? 'fa-user-slash' : 'fa-user-check' ?> mr-1"></i>
@@ -251,21 +261,21 @@ $users = $stmt->fetchAll();
                 <!-- Pagination -->
                 <?php if ($totalPages > 1): ?>
                     <div
-                        class="px-6 py-4 bg-gray-50 dark:bg-gray-900/50 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                        <div class="text-sm text-gray-700 dark:text-gray-300">
+                        class="px-6 py-4 bg-gray-50 dark:bg-gray-900/50 border-t border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="text-sm text-gray-700 dark:text-gray-300 text-center sm:text-left">
                             Showing <?= $offset + 1 ?> to <?= min($offset + $perPage, $totalUsers) ?> of <?= $totalUsers ?>
                             users
                         </div>
-                        <div class="flex space-x-2">
+                        <div class="flex gap-3 w-full sm:w-auto">
                             <?php if ($page > 1): ?>
                                 <a href="?page=<?= $page - 1 ?>&search=<?= urlencode($search) ?>&role=<?= urlencode($roleFilter) ?>&status=<?= urlencode($statusFilter) ?>"
-                                    class="px-3 py-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm hover:bg-gray-50 dark:hover:bg-gray-600">
+                                    class="flex-1 sm:flex-none px-4 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors text-center">
                                     Previous
                                 </a>
                             <?php endif; ?>
                             <?php if ($page < $totalPages): ?>
                                 <a href="?page=<?= $page + 1 ?>&search=<?= urlencode($search) ?>&role=<?= urlencode($roleFilter) ?>&status=<?= urlencode($statusFilter) ?>"
-                                    class="px-3 py-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm hover:bg-gray-50 dark:hover:bg-gray-600">
+                                    class="flex-1 sm:flex-none px-4 py-2.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors text-center">
                                     Next
                                 </a>
                             <?php endif; ?>
@@ -275,6 +285,7 @@ $users = $stmt->fetchAll();
             </div>
         </div>
     </main>
+    </div> <!-- End Content Wrapper -->
 </body>
 
 </html>

@@ -73,7 +73,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_delete'])) {
     </style>
 </head>
 
-<body class="bg-gray-50 dark:bg-gray-900">
+<body class="relative min-h-screen">
+    <!-- Background Image with Overlay -->
+    <div class="fixed inset-0 z-0">
+        <img src="<?= url('../../src/assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <div class="absolute inset-0 bg-white/90 dark:bg-gray-900/95"></div>
+    </div>
+
+    <!-- Content Wrapper -->
+    <div class="relative z-10">
     <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
 
     <main class="py-8">
@@ -133,6 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_delete'])) {
             </div>
         </div>
     </main>
+    </div> <!-- End Content Wrapper -->
 </body>
 
 </html>
