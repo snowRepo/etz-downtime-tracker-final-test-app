@@ -15,55 +15,36 @@ require_once __DIR__ . '/../../config/config.php';
  * Log any user activity to the database
  * 
  * @param int|null $userId User ID (null for system actions)
- * @param string $actionType Type of action (must match ENUM values)
+ * @param string $action Action type
  * @param string $description Human-readable description
- * @param string|null $entityType Type of entity affected (user, incident, etc.)
- * @param int|null $entityId ID of the affected entity
- * @param array|null $metadata Additional context data
  * @return bool Success status
  */
-function logActivity($userId, $actionType, $description, $entityType = null, $entityId = null, $metadata = null) {
+function logActivity($userId, $action, $description)
+{
     global $pdo;
-    
+
     try {
-        // Get username if user ID provided
-        $username = null;
-        if ($userId !== null) {
-            $stmt = $pdo->prepare("SELECT username FROM users WHERE user_id = ?");
-            $stmt->execute([$userId]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
-            $username = $user ? $user['username'] : null;
-        }
-        
         // Get IP address
         $ipAddress = $_SERVER['REMOTE_ADDR'] ?? null;
-        
+
         // Get user agent
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? null;
-        
-        // Convert metadata to JSON if provided
-        $metadataJson = $metadata ? json_encode($metadata) : null;
-        
+
         // Insert log entry
         $stmt = $pdo->prepare("
             INSERT INTO activity_logs (
-                user_id, username, action_type, entity_type, entity_id,
-                description, ip_address, user_agent, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_id, action, description, ip_address, user_agent
+            ) VALUES (?, ?, ?, ?, ?)
         ");
-        
+
         return $stmt->execute([
             $userId,
-            $username,
-            $actionType,
-            $entityType,
-            $entityId,
+            $action,
             $description,
             $ipAddress,
-            $userAgent,
-            $metadataJson
+            $userAgent
         ]);
-        
+
     } catch (PDOException $e) {
         error_log("Activity logging failed: " . $e->getMessage());
         return false;
@@ -78,7 +59,8 @@ function logActivity($userId, $actionType, $description, $entityType = null, $en
  * @param string|null $failureReason Reason for failure if unsuccessful
  * @return bool Success status
  */
-function logLogin($userId, $success = true, $failureReason = null) {
+function logLogin($userId, $success = true, $failureReason = null)
+{
     if ($success) {
         return logActivity(
             $userId,
@@ -89,10 +71,7 @@ function logLogin($userId, $success = true, $failureReason = null) {
         return logActivity(
             $userId,
             'login_failed',
-            'Login attempt failed: ' . ($failureReason ?? 'Invalid credentials'),
-            null,
-            null,
-            ['reason' => $failureReason]
+            'Login attempt failed: ' . ($failureReason ?? 'Invalid credentials')
         );
     }
 }
@@ -103,7 +82,8 @@ function logLogin($userId, $success = true, $failureReason = null) {
  * @param int $userId User ID
  * @return bool Success status
  */
-function logLogout($userId) {
+function logLogout($userId)
+{
     return logActivity(
         $userId,
         'logout',
@@ -120,15 +100,16 @@ function logLogout($userId) {
  * @param array|null $changes Changes made (for updates)
  * @return bool Success status
  */
-function logUserAction($userId, $action, $targetUserId, $changes = null) {
+function logUserAction($userId, $action, $targetUserId, $changes = null)
+{
     global $pdo;
-    
+
     // Get target username
     $stmt = $pdo->prepare("SELECT username FROM users WHERE user_id = ?");
     $stmt->execute([$targetUserId]);
     $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
     $targetUsername = $targetUser ? $targetUser['username'] : 'Unknown';
-    
+
     $actionMap = [
         'created' => [
             'type' => 'user_created',
@@ -147,19 +128,16 @@ function logUserAction($userId, $action, $targetUserId, $changes = null) {
             'desc' => "Changed role for user: {$targetUsername}"
         ]
     ];
-    
+
     $actionInfo = $actionMap[$action] ?? [
         'type' => 'other',
         'desc' => "Performed action on user: {$targetUsername}"
     ];
-    
+
     return logActivity(
         $userId,
         $actionInfo['type'],
-        $actionInfo['desc'],
-        'user',
-        $targetUserId,
-        $changes
+        $actionInfo['desc']
     );
 }
 
@@ -168,23 +146,39 @@ function logUserAction($userId, $action, $targetUserId, $changes = null) {
  * 
  * @param int $userId User performing the action
  * @param string $action Action type (created, updated, deleted, viewed)
- * @param int $incidentId Incident ID
+ * @param int|null $incidentId Incident ID
  * @param array|null $changes Changes made (for updates)
  * @return bool Success status
  */
-function logIncidentAction($userId, $action, $incidentId, $changes = null) {
+function logIncidentAction($userId, $action, $incidentId, $changes = null)
+{
     global $pdo;
-    
-    // Get incident details
-    $stmt = $pdo->prepare("SELECT service, impact_level FROM incidents WHERE incident_id = ?");
-    $stmt->execute([$incidentId]);
-    $incident = $stmt->fetch(PDO::FETCH_ASSOC);
-    $service = $incident ? $incident['service'] : 'Unknown';
-    
+
+    $service = 'Unknown';
+    if ($incidentId) {
+        // Get incident details with service name
+        $stmt = $pdo->prepare("
+            SELECT s.service_name, i.impact_level 
+            FROM incidents i 
+            JOIN services s ON i.service_id = s.service_id 
+            WHERE i.incident_id = ?
+        ");
+        $stmt->execute([$incidentId]);
+        $incident = $stmt->fetch(PDO::FETCH_ASSOC);
+        $service = $incident ? $incident['service_name'] : 'Unknown';
+    } elseif ($action === 'created_multiple') {
+        $count = $changes['services_count'] ?? 0;
+        $service = "Multiple Services ({$count})";
+    }
+
     $actionMap = [
         'created' => [
             'type' => 'incident_created',
             'desc' => "Reported new incident for {$service}"
+        ],
+        'created_multiple' => [
+            'type' => 'incident_created',
+            'desc' => "Reported multiple incidents: {$service}"
         ],
         'updated' => [
             'type' => 'incident_updated',
@@ -199,19 +193,16 @@ function logIncidentAction($userId, $action, $incidentId, $changes = null) {
             'desc' => "Viewed incident details for {$service}"
         ]
     ];
-    
+
     $actionInfo = $actionMap[$action] ?? [
         'type' => 'other',
         'desc' => "Performed action on incident for {$service}"
     ];
-    
+
     return logActivity(
         $userId,
         $actionInfo['type'],
-        $actionInfo['desc'],
-        'incident',
-        $incidentId,
-        $changes
+        $actionInfo['desc']
     );
 }
 
@@ -223,7 +214,8 @@ function logIncidentAction($userId, $action, $incidentId, $changes = null) {
  * @param array|null $filters Filters applied to the export
  * @return bool Success status
  */
-function logExport($userId, $exportType, $filters = null) {
+function logExport($userId, $exportType, $filters = null)
+{
     $typeMap = [
         'analytics_pdf' => [
             'type' => 'analytics_exported',
@@ -246,19 +238,16 @@ function logExport($userId, $exportType, $filters = null) {
             'desc' => 'Exported incidents list (Excel)'
         ]
     ];
-    
+
     $exportInfo = $typeMap[$exportType] ?? [
         'type' => 'report_exported',
         'desc' => "Exported {$exportType} report"
     ];
-    
+
     return logActivity(
         $userId,
         $exportInfo['type'],
-        $exportInfo['desc'],
-        null,
-        null,
-        ['export_type' => $exportType, 'filters' => $filters]
+        $exportInfo['desc']
     );
 }
 
@@ -270,75 +259,67 @@ function logExport($userId, $exportType, $filters = null) {
  * @param int $offset Offset for pagination
  * @return array Array of log entries
  */
-function getActivityLogs($filters = [], $limit = 50, $offset = 0) {
+function getActivityLogs($filters = [], $limit = 50, $offset = 0)
+{
     global $pdo;
-    
+
     $where = [];
     $params = [];
-    
+
     // Filter by user ID
     if (!empty($filters['user_id'])) {
         $where[] = "user_id = ?";
         $params[] = $filters['user_id'];
     }
-    
+
     // Filter by action type
-    if (!empty($filters['action_type'])) {
-        if (is_array($filters['action_type'])) {
-            $placeholders = str_repeat('?,', count($filters['action_type']) - 1) . '?';
-            $where[] = "action_type IN ($placeholders)";
-            $params = array_merge($params, $filters['action_type']);
+    if (!empty($filters['action'])) {
+        if (is_array($filters['action'])) {
+            $placeholders = str_repeat('?,', count($filters['action']) - 1) . '?';
+            $where[] = "l.action IN ($placeholders)";
+            $params = array_merge($params, $filters['action']);
         } else {
-            $where[] = "action_type = ?";
-            $params[] = $filters['action_type'];
+            $where[] = "l.action = ?";
+            $params[] = $filters['action'];
         }
     }
-    
+
     // Filter by date range
     if (!empty($filters['start_date'])) {
         $where[] = "created_at >= ?";
         $params[] = $filters['start_date'];
     }
-    
+
     if (!empty($filters['end_date'])) {
         $where[] = "created_at <= ?";
         $params[] = $filters['end_date'] . ' 23:59:59';
     }
-    
-    // Filter by entity
-    if (!empty($filters['entity_type'])) {
-        $where[] = "entity_type = ?";
-        $params[] = $filters['entity_type'];
-    }
-    
-    if (!empty($filters['entity_id'])) {
-        $where[] = "entity_id = ?";
-        $params[] = $filters['entity_id'];
-    }
-    
+
     // Search in description
     if (!empty($filters['search'])) {
-        $where[] = "(description LIKE ? OR username LIKE ?)";
+        $where[] = "(l.description LIKE ? OR u.username LIKE ?)";
         $searchTerm = '%' . $filters['search'] . '%';
         $params[] = $searchTerm;
         $params[] = $searchTerm;
     }
-    
+
     $whereClause = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
-    
+
     $sql = "
-        SELECT * FROM activity_logs
+        SELECT l.*, u.username 
+        FROM activity_logs l
+        JOIN users u ON l.user_id = u.user_id
         $whereClause
-        ORDER BY created_at DESC
+        ORDER BY l.created_at DESC
         LIMIT ? OFFSET ?
     ";
-    
+
     $params[] = $limit;
     $params[] = $offset;
-    
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    
+
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
@@ -348,65 +329,56 @@ function getActivityLogs($filters = [], $limit = 50, $offset = 0) {
  * @param array $filters Same filters as getActivityLogs
  * @return int Total count
  */
-function getActivityLogsCount($filters = []) {
+function getActivityLogsCount($filters = [])
+{
     global $pdo;
-    
+
     $where = [];
     $params = [];
-    
+
     // Same filtering logic as getActivityLogs
     if (!empty($filters['user_id'])) {
         $where[] = "user_id = ?";
         $params[] = $filters['user_id'];
     }
-    
-    if (!empty($filters['action_type'])) {
-        if (is_array($filters['action_type'])) {
-            $placeholders = str_repeat('?,', count($filters['action_type']) - 1) . '?';
-            $where[] = "action_type IN ($placeholders)";
-            $params = array_merge($params, $filters['action_type']);
+
+    if (!empty($filters['action'])) {
+        if (is_array($filters['action'])) {
+            $placeholders = str_repeat('?,', count($filters['action']) - 1) . '?';
+            $where[] = "l.action IN ($placeholders)";
+            $params = array_merge($params, $filters['action']);
         } else {
-            $where[] = "action_type = ?";
-            $params[] = $filters['action_type'];
+            $where[] = "l.action = ?";
+            $params[] = $filters['action'];
         }
     }
-    
+
     if (!empty($filters['start_date'])) {
         $where[] = "created_at >= ?";
         $params[] = $filters['start_date'];
     }
-    
+
     if (!empty($filters['end_date'])) {
         $where[] = "created_at <= ?";
         $params[] = $filters['end_date'] . ' 23:59:59';
     }
-    
-    if (!empty($filters['entity_type'])) {
-        $where[] = "entity_type = ?";
-        $params[] = $filters['entity_type'];
-    }
-    
-    if (!empty($filters['entity_id'])) {
-        $where[] = "entity_id = ?";
-        $params[] = $filters['entity_id'];
-    }
-    
+
     if (!empty($filters['search'])) {
-        $where[] = "(description LIKE ? OR username LIKE ?)";
+        $where[] = "(l.description LIKE ? OR u.username LIKE ?)";
         $searchTerm = '%' . $filters['search'] . '%';
         $params[] = $searchTerm;
         $params[] = $searchTerm;
     }
-    
+
     $whereClause = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
-    
-    $sql = "SELECT COUNT(*) as total FROM activity_logs $whereClause";
-    
+
+    $sql = "SELECT COUNT(*) as total FROM activity_logs l JOIN users u ON l.user_id = u.user_id $whereClause";
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    
+
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
-    return (int)$result['total'];
+    return (int) $result['total'];
 }
 
 /**
@@ -416,29 +388,30 @@ function getActivityLogsCount($filters = []) {
  * @param int $days Number of days to look back
  * @return array Summary statistics
  */
-function getUserActivitySummary($userId, $days = 30) {
+function getUserActivitySummary($userId, $days = 30)
+{
     global $pdo;
-    
+
     $startDate = date('Y-m-d', strtotime("-$days days"));
-    
+
     $stmt = $pdo->prepare("
         SELECT 
             COUNT(*) as total_actions,
             COUNT(DISTINCT DATE(created_at)) as active_days,
-            action_type,
+            action as action_type,
             COUNT(*) as action_count
         FROM activity_logs
         WHERE user_id = ? AND created_at >= ?
-        GROUP BY action_type
+        GROUP BY action
         ORDER BY action_count DESC
     ");
-    
+
     $stmt->execute([$userId, $startDate]);
     $actionBreakdown = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
     $totalActions = array_sum(array_column($actionBreakdown, 'action_count'));
     $activeDays = $actionBreakdown[0]['active_days'] ?? 0;
-    
+
     return [
         'total_actions' => $totalActions,
         'active_days' => $activeDays,
@@ -453,15 +426,18 @@ function getUserActivitySummary($userId, $days = 30) {
  * @param int $limit Number of recent entries to retrieve
  * @return array Recent log entries
  */
-function getRecentActivity($limit = 20) {
+function getRecentActivity($limit = 20)
+{
     global $pdo;
-    
+
     $stmt = $pdo->prepare("
-        SELECT * FROM activity_logs
-        ORDER BY created_at DESC
+        SELECT l.*, u.username
+        FROM activity_logs l
+        JOIN users u ON l.user_id = u.user_id
+        ORDER BY l.created_at DESC
         LIMIT ?
     ");
-    
+
     $stmt->execute([$limit]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
@@ -473,60 +449,62 @@ function getRecentActivity($limit = 20) {
  * @param string|null $endDate End date (Y-m-d format)
  * @return array Statistics
  */
-function getActivityStats($startDate = null, $endDate = null) {
+function getActivityStats($startDate = null, $endDate = null)
+{
     global $pdo;
-    
+
     $where = [];
     $params = [];
-    
+
     if ($startDate) {
         $where[] = "created_at >= ?";
         $params[] = $startDate;
     }
-    
+
     if ($endDate) {
         $where[] = "created_at <= ?";
         $params[] = $endDate . ' 23:59:59';
     }
-    
+
     $whereClause = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
-    
+
     // Total logs
     $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM activity_logs $whereClause");
     $stmt->execute($params);
     $totalLogs = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
-    
+
     // Unique users
     $uniqueUsersWhere = $whereClause ? "$whereClause AND user_id IS NOT NULL" : "WHERE user_id IS NOT NULL";
     $stmt = $pdo->prepare("SELECT COUNT(DISTINCT user_id) as total FROM activity_logs $uniqueUsersWhere");
     $stmt->execute($params);
     $uniqueUsers = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
-    
+
     // Most common actions
     $stmt = $pdo->prepare("
-        SELECT action_type, COUNT(*) as count
+        SELECT action as action_type, COUNT(*) as count
         FROM activity_logs
         $whereClause
-        GROUP BY action_type
+        GROUP BY action
         ORDER BY count DESC
         LIMIT 5
     ");
     $stmt->execute($params);
     $topActions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
     // Most active users
-    $topUsersWhere = $whereClause ? "$whereClause AND user_id IS NOT NULL" : "WHERE user_id IS NOT NULL";
+    $topUsersWhere = $whereClause ? "$whereClause AND l.user_id IS NOT NULL" : "WHERE l.user_id IS NOT NULL";
     $stmt = $pdo->prepare("
-        SELECT username, COUNT(*) as action_count
-        FROM activity_logs
+        SELECT u.username, COUNT(*) as action_count
+        FROM activity_logs l
+        JOIN users u ON l.user_id = u.user_id
         $topUsersWhere
-        GROUP BY username
+        GROUP BY u.username
         ORDER BY action_count DESC
         LIMIT 5
     ");
     $stmt->execute($params);
     $topUsers = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
     return [
         'total_logs' => $totalLogs,
         'unique_users' => $uniqueUsers,
@@ -541,14 +519,15 @@ function getActivityStats($startDate = null, $endDate = null) {
  * @param int $daysToKeep Number of days to retain logs
  * @return int Number of logs deleted
  */
-function cleanupOldLogs($daysToKeep = 365) {
+function cleanupOldLogs($daysToKeep = 365)
+{
     global $pdo;
-    
+
     $cutoffDate = date('Y-m-d', strtotime("-$daysToKeep days"));
-    
+
     $stmt = $pdo->prepare("DELETE FROM activity_logs WHERE created_at < ?");
     $stmt->execute([$cutoffDate]);
-    
+
     return $stmt->rowCount();
 }
 
@@ -558,25 +537,24 @@ function cleanupOldLogs($daysToKeep = 365) {
  * @param array $filters Same filters as getActivityLogs
  * @return string CSV content
  */
-function exportActivityLogsCSV($filters = []) {
+function exportActivityLogsCSV($filters = [])
+{
     $logs = getActivityLogs($filters, 10000, 0); // Get up to 10,000 logs
-    
-    $csv = "Log ID,User ID,Username,Action Type,Entity Type,Entity ID,Description,IP Address,Created At\n";
-    
+
+    $csv = "Log ID,User ID,Username,Action,Description,IP Address,Created At\n";
+
     foreach ($logs as $log) {
         $csv .= sprintf(
-            "%d,%s,%s,%s,%s,%s,\"%s\",%s,%s\n",
+            "%d,%s,%s,%s,\"%s\",%s,%s\n",
             $log['log_id'],
             $log['user_id'] ?? '',
             $log['username'] ?? '',
-            $log['action_type'],
-            $log['entity_type'] ?? '',
-            $log['entity_id'] ?? '',
+            $log['action'] ?? '',
             str_replace('"', '""', $log['description']),
             $log['ip_address'] ?? '',
             $log['created_at']
         );
     }
-    
+
     return $csv;
 }

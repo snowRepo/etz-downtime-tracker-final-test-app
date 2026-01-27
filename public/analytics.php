@@ -1,6 +1,6 @@
 <?php
-require_once '../config/config.php';
-require_once '../src/includes/auth.php';
+require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/../src/includes/auth.php';
 requireLogin();
 
 // Set default date range (last 30 days including today)
@@ -14,29 +14,31 @@ $endDate = $_GET['end_date'] ?? $endDate;
 
 // Fetch data for charts
 try {
-    // Get total incidents by status (grouped by service and root cause)
+    // Get total incidents by status
     $statusQuery = "SELECT 
                         status, 
-                        COUNT(DISTINCT CONCAT(service_id, '-', root_cause)) as count 
-                    FROM issues_reported 
-                    WHERE created_at BETWEEN ? AND ? " . 
-                    ($companyId ? "AND company_id = ? " : "") . 
-                    "GROUP BY status";
+                        COUNT(incident_id) as count 
+                    FROM incidents 
+                    WHERE created_at BETWEEN ? AND ? " .
+        ($companyId ? "AND incident_id IN (SELECT incident_id FROM incident_affected_companies WHERE company_id = ?) " : "") .
+        "GROUP BY status";
     $stmt = $pdo->prepare($statusQuery);
     $params = [$startDate, $endDate];
-    if ($companyId) $params[] = $companyId;
+    if ($companyId)
+        $params[] = $companyId;
     $stmt->execute($params);
     $incidentsByStatus = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Get incidents by company (count distinct by service and root cause)
+    // Get incidents by company
     $companyQuery = "SELECT 
                         c.company_name, 
-                        COUNT(DISTINCT CONCAT(i.service_id, '-', i.root_cause)) as incident_count 
-                    FROM issues_reported i
-                    JOIN companies c ON i.company_id = c.company_id
-                    WHERE i.created_at BETWEEN ? AND ? " . 
-                    ($companyId ? "AND i.company_id = ? " : "") . 
-                    "GROUP BY i.company_id 
+                        COUNT(DISTINCT i.incident_id) as incident_count 
+                    FROM incidents i
+                    JOIN incident_affected_companies iac ON i.incident_id = iac.incident_id
+                    JOIN companies c ON iac.company_id = c.company_id
+                    WHERE i.created_at BETWEEN ? AND ? " .
+        ($companyId ? "AND iac.company_id = ? " : "") .
+        "GROUP BY iac.company_id 
                     ORDER BY incident_count DESC";
     $stmt = $pdo->prepare($companyQuery);
     $stmt->execute($params);
@@ -45,11 +47,11 @@ try {
     // Get monthly trend
     $trendQuery = "SELECT 
                     DATE_FORMAT(i.created_at, '%Y-%m') as month,
-                    COUNT(DISTINCT CONCAT(i.service_id, '-', i.root_cause)) as incident_count
-                   FROM issues_reported i
-                   WHERE i.created_at BETWEEN ? AND ? " . 
-                   ($companyId ? "AND i.company_id = ? " : "") . 
-                   "GROUP BY DATE_FORMAT(i.created_at, '%Y-%m')
+                    COUNT(i.incident_id) as incident_count
+                   FROM incidents i
+                   WHERE i.created_at BETWEEN ? AND ? " .
+        ($companyId ? "AND i.incident_id IN (SELECT incident_id FROM incident_affected_companies WHERE company_id = ?) " : "") .
+        "GROUP BY DATE_FORMAT(i.created_at, '%Y-%m')
                    ORDER BY month";
     $stmt = $pdo->prepare($trendQuery);
     $stmt->execute($params);
@@ -57,10 +59,10 @@ try {
 
     // Get impact level distribution
     $impactQuery = "SELECT impact_level, COUNT(*) as count 
-                   FROM issues_reported i
-                   WHERE i.created_at BETWEEN ? AND ? " . 
-                   ($companyId ? "AND i.company_id = ? " : "") . 
-                   "GROUP BY impact_level";
+                   FROM incidents i
+                   WHERE i.created_at BETWEEN ? AND ? " .
+        ($companyId ? "AND i.incident_id IN (SELECT incident_id FROM incident_affected_companies WHERE company_id = ?) " : "") .
+        "GROUP BY impact_level";
     $stmt = $pdo->prepare($impactQuery);
     $stmt->execute($params);
     $impactLevels = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -89,7 +91,7 @@ foreach ($statuses as $status) {
     foreach ($incidentsByStatus as $statusItem) {
         if (strtolower($statusItem['status']) === $status) {
             $statusLabels[] = ucfirst($status);
-            $statusData[] = (int)$statusItem['count'];
+            $statusData[] = (int) $statusItem['count'];
             $statusColors[] = $statusColorMap[$status];
             $found = true;
             $hasData = $hasData || $statusItem['count'] > 0;
@@ -114,14 +116,14 @@ $companyLabels = [];
 $companyData = [];
 foreach ($incidentsByCompany as $company) {
     $companyLabels[] = $company['company_name'];
-    $companyData[] = (int)$company['incident_count'];
+    $companyData[] = (int) $company['incident_count'];
 }
 
 $monthlyLabels = [];
 $monthlyData = [];
 foreach ($monthlyTrend as $month) {
     $monthlyLabels[] = date('M Y', strtotime($month['month'] . '-01'));
-    $monthlyData[] = (int)$month['incident_count'];
+    $monthlyData[] = (int) $month['incident_count'];
 }
 
 $impactLabels = [];
@@ -135,7 +137,7 @@ $impactColors = [
 
 foreach ($impactLevels as $impact) {
     $impactLabels[] = $impact['impact_level'];
-    $impactData[] = (int)$impact['count'];
+    $impactData[] = (int) $impact['count'];
 }
 
 // Get companies for filter dropdown
@@ -144,11 +146,12 @@ $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER B
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Analytics - eTranzact</title>
-    
+
     <!-- Tailwind CSS v3.4.17 -->
     <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio"></script>
     <script>
@@ -156,492 +159,529 @@ $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER B
             darkMode: 'class'
         }
     </script>
-    
+
     <!-- Alpine.js v3.x -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    
+
     <!-- Font Awesome 6.5.1 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    
+
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
+
     <style>
         * {
             font-family: 'Inter', sans-serif;
         }
-        
+
         .chart-container {
             position: relative;
             height: 350px;
             width: 100%;
         }
+
         .stat-card {
             transition: transform 0.3s ease;
         }
+
         .stat-card:hover {
             transform: translateY(-5px);
         }
     </style>
 </head>
+
 <body class="bg-gray-50 dark:bg-gray-900">
     <!-- Navbar -->
-    <?php include '../src/includes/navbar.php'; ?>
-    
+    <?php include __DIR__ . '/../src/includes/navbar.php'; ?>
+
     <!-- Loading Overlay -->
-    <?php include '../src/includes/loading.php'; ?>
-    
+    <?php include __DIR__ . '/../src/includes/loading.php'; ?>
+
     <main class="py-6">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <!-- Header with title and export button -->
-        <div class="md:flex md:items-center md:justify-between mb-6">
-            <div class="flex-1 min-w-0">
-                <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Analytics</h2>
+            <!-- Header with title and export button -->
+            <div class="md:flex md:items-center md:justify-between mb-6">
+                <div class="flex-1 min-w-0">
+                    <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Analytics</h2>
+                </div>
+                <div class="mt-4 flex md:mt-0 md:ml-6">
+
+                    <!-- PDF Export Button -->
+                    <a href="../src/exports/export_analytics_pdf.php?company_id=<?= $companyId ? htmlspecialchars($companyId) : '' ?>&start_date=<?= htmlspecialchars($startDate) ?>&end_date=<?= htmlspecialchars($endDate) ?>"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                        data-no-loading>
+                        <svg class="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"
+                            fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd"
+                                d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                                clip-rule="evenodd" />
+                        </svg>
+                        Export PDF
+                    </a>
+                </div>
             </div>
-            <div class="mt-4 flex md:mt-0 md:ml-6">
-            
-            <!-- PDF Export Button -->
-            <a href="../src/exports/export_analytics_pdf.php?company_id=<?= $companyId ? htmlspecialchars($companyId) : '' ?>&start_date=<?= htmlspecialchars($startDate) ?>&end_date=<?= htmlspecialchars($endDate) ?>" 
-               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" data-no-loading>
-                <svg class="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-                </svg>
-                Export PDF
-            </a>
-            </div>
-        </div>
-        
-        <!-- Date Range Picker and Filters -->
-        <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8">
-            <form method="GET" class="flex flex-wrap items-end gap-4">
-                <div class="flex items-center space-x-2">
-                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Company:</label>
-                    <div class="relative">
-                        <button type="button" id="company-dropdown-button" class="relative w-48 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm pl-3 pr-10 py-1.5 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 dark:text-white">
-                            <span id="company-selected-text" class="block truncate">
-                                <?php 
-                                $selectedCompanyName = 'All Companies';
-                                if ($companyId) {
-                                    foreach ($companies as $company) {
-                                        if ($company['company_id'] == $companyId) {
-                                            $selectedCompanyName = $company['company_name'];
-                                            break;
+
+            <!-- Date Range Picker and Filters -->
+            <div
+                class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8">
+                <form method="GET" class="flex flex-wrap items-end gap-4">
+                    <div class="flex items-center space-x-2">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Company:</label>
+                        <div class="relative">
+                            <button type="button" id="company-dropdown-button"
+                                class="relative w-48 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm pl-3 pr-10 py-1.5 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm text-gray-900 dark:text-white">
+                                <span id="company-selected-text" class="block truncate">
+                                    <?php
+                                    $selectedCompanyName = 'All Companies';
+                                    if ($companyId) {
+                                        foreach ($companies as $company) {
+                                            if ($company['company_id'] == $companyId) {
+                                                $selectedCompanyName = $company['company_name'];
+                                                break;
+                                            }
                                         }
                                     }
-                                }
-                                echo htmlspecialchars($selectedCompanyName);
-                                ?>
-                            </span>
-                            <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                                <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                    <path fill-rule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                </svg>
-                            </span>
-                        </button>
-                        <div id="company-dropdown" class="hidden absolute z-10 mt-1 w-full bg-white dark:bg-gray-700 shadow-lg max-h-60 rounded-md py-1 text-sm ring-1 ring-black ring-opacity-5 dark:ring-gray-600 overflow-auto focus:outline-none">
-                            <div class="flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600">
-                                <input type="radio" id="company-all" name="company_id" value="" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300" <?= empty($companyId) ? 'checked' : '' ?>>
-                                <label for="company-all" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">All Companies</label>
-                            </div>
-                            <?php foreach ($companies as $company): ?>
+                                    echo htmlspecialchars($selectedCompanyName);
+                                    ?>
+                                </span>
+                                <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                                    <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg"
+                                        viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path fill-rule="evenodd"
+                                            d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                                            clip-rule="evenodd" />
+                                    </svg>
+                                </span>
+                            </button>
+                            <div id="company-dropdown"
+                                class="hidden absolute z-10 mt-1 w-full bg-white dark:bg-gray-700 shadow-lg max-h-60 rounded-md py-1 text-sm ring-1 ring-black ring-opacity-5 dark:ring-gray-600 overflow-auto focus:outline-none">
                                 <div class="flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600">
-                                    <input type="radio" id="company-<?= $company['company_id'] ?>" name="company_id" value="<?= $company['company_id'] ?>" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300" <?= $companyId == $company['company_id'] ? 'checked' : '' ?>>
-                                    <label for="company-<?= $company['company_id'] ?>" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                                        <?= htmlspecialchars($company['company_name']) ?>
-                                    </label>
+                                    <input type="radio" id="company-all" name="company_id" value=""
+                                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                        <?= empty($companyId) ? 'checked' : '' ?>>
+                                    <label for="company-all"
+                                        class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">All
+                                        Companies</label>
                                 </div>
-                            <?php endforeach; ?>
+                                <?php foreach ($companies as $company): ?>
+                                    <div class="flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600">
+                                        <input type="radio" id="company-<?= $company['company_id'] ?>" name="company_id"
+                                            value="<?= $company['company_id'] ?>"
+                                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                                            <?= $companyId == $company['company_id'] ? 'checked' : '' ?>>
+                                        <label for="company-<?= $company['company_id'] ?>"
+                                            class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                            <?= htmlspecialchars($company['company_name']) ?>
+                                        </label>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <input type="hidden" name="company_id" id="selected-company-id" value="<?= $companyId ?>">
                         </div>
-                        <input type="hidden" name="company_id" id="selected-company-id" value="<?= $companyId ?>">
                     </div>
-                </div>
-                <div class="flex items-center space-x-2">
-                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">From:</label>
-                    <input type="date" name="start_date" value="<?= $startDate ?>" class="border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm bg-white dark:bg-gray-700 dark:text-white">
-                </div>
-                <div class="flex items-center space-x-2">
-                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">To:</label>
-                    <input type="date" name="end_date" value="<?= $endDate ?>" class="border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm bg-white dark:bg-gray-700 dark:text-white">
-                </div>
-                <button type="submit" name="apply_filters" value="1" class="bg-blue-600 dark:bg-blue-500 text-white px-4 py-1 rounded text-sm hover:bg-blue-700 dark:hover:bg-blue-600">
-                    Apply
-                </button>
-                <?php if (isset($_GET['apply_filters'])): ?>
-                    <a href="analytics.php" class="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 px-4 py-1 rounded text-sm hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                        Clear
-                    </a>
-                <?php endif; ?>
-            </form>
-        </div>
+                    <div class="flex items-center space-x-2">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">From:</label>
+                        <input type="date" name="start_date" value="<?= $startDate ?>"
+                            class="border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm bg-white dark:bg-gray-700 dark:text-white">
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">To:</label>
+                        <input type="date" name="end_date" value="<?= $endDate ?>"
+                            class="border border-gray-300 dark:border-gray-600 rounded px-3 py-1 text-sm bg-white dark:bg-gray-700 dark:text-white">
+                    </div>
+                    <button type="submit" name="apply_filters" value="1"
+                        class="bg-blue-600 dark:bg-blue-500 text-white px-4 py-1 rounded text-sm hover:bg-blue-700 dark:hover:bg-blue-600">
+                        Apply
+                    </button>
+                    <?php if (isset($_GET['apply_filters'])): ?>
+                        <a href="analytics.php"
+                            class="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 px-4 py-1 rounded text-sm hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            Clear
+                        </a>
+                    <?php endif; ?>
+                </form>
+            </div>
 
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <?php
-            $totalIncidents = array_sum($statusData);
-            $openIncidents = 0;
-            $resolvedIncidents = 0;
-            $avgResolutionTime = 'N/A';
-            
-            foreach ($incidentsByStatus as $status) {
-                if ($status['status'] === 'pending') {
-                    $openIncidents = $status['count'];
-                }
-                if ($status['status'] === 'resolved') {
-                    $resolvedIncidents = $status['count'];
-                }
-            }
-            
-            // Calculate average resolution time (in hours)
-            $resolutionQuery = "SELECT AVG(TIMESTAMPDIFF(HOUR, d.actual_start_time, COALESCE(d.actual_end_time, NOW()))) as avg_hours 
-                              FROM issues_reported i
-                              JOIN downtime_incidents d ON i.issue_id = d.issue_id
-                              WHERE d.actual_start_time IS NOT NULL
-                              AND i.created_at BETWEEN ? AND ? " . 
-                              ($companyId ? "AND i.company_id = ? " : "");
-            $stmt = $pdo->prepare($resolutionQuery);
-            $stmt->execute($params);
-            $avgResolution = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if ($avgResolution && $avgResolution['avg_hours'] !== null) {
-                $avgHours = round($avgResolution['avg_hours'], 1);
-                $avgResolutionTime = $avgHours < 24 
-                    ? $avgHours . ' hours' 
-                    : round($avgHours / 24, 1) . ' days';
-            }
-            ?>
-            
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <div class="flex items-center">
-                    <div class="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mr-4">
-                        <i class="fas fa-exclamation-triangle text-blue-600 text-2xl"></i>
-                    </div>
-                    <div>
-                        <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Total <br> Incidents</p>
-                        <h3 class="text-2xl font-bold text-gray-800 dark:text-white"><?= number_format($totalIncidents) ?></h3>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <div class="flex items-center">
-                    <div class="w-14 h-14 rounded-full bg-yellow-100 flex items-center justify-center flex-shrink-0 mr-4">
-                        <i class="fas fa-clock text-yellow-600 text-2xl"></i>
-                    </div>
-                    <div>
-                        <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Pending <br> Incidents</p>
-                        <h3 class="text-2xl font-bold text-gray-800 dark:text-white"><?= number_format($openIncidents) ?></h3>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <div class="flex items-center">
-                    <div class="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0 mr-4">
-                        <i class="fas fa-check-circle text-green-600 text-2xl"></i>
-                    </div>
-                    <div>
-                        <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Resolved Incidents</p>
-                        <h3 class="text-2xl font-bold text-gray-800 dark:text-white"><?= number_format($resolvedIncidents) ?></h3>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <div class="flex items-center">
-                    <div class="w-14 h-14 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mr-4">
-                        <i class="fas fa-stopwatch text-purple-600 text-2xl"></i>
-                    </div>
-                    <div>
-                        <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Avg. Resolution Time</p>
-                        <h3 class="text-2xl font-bold text-gray-800 dark:text-white"><?= $avgResolutionTime ?></h3>
-                    </div>
-                </div>
-            </div>
-        </div>
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                <?php
+                $totalIncidents = array_sum($statusData);
+                $openIncidents = 0;
+                $resolvedIncidents = 0;
+                $avgResolutionTime = 'N/A';
 
-        <!-- Charts Row 1 -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <!-- Incidents by Status -->
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Incidents by Status</h3>
-                <div class="chart-container">
-                    <canvas id="statusChart"></canvas>
-                </div>
-            </div>
-            
-            <!-- Monthly Trend -->
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Monthly Incident Trend</h3>
-                <div class="chart-container">
-                    <canvas id="trendChart"></canvas>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Charts Row 2 -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <!-- Incidents by Company -->
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Incidents by Company</h3>
-                <div class="chart-container">
-                    <canvas id="companyChart"></canvas>
-                </div>
-            </div>
-            
-            <!-- Impact Level Distribution -->
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-                <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Impact Level Distribution</h3>
-                <div class="chart-container">
-                    <canvas id="impactChart"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // Company dropdown functionality
-        document.addEventListener('DOMContentLoaded', function() {
-            const dropdownButton = document.getElementById('company-dropdown-button');
-            const dropdown = document.getElementById('company-dropdown');
-            const selectedText = document.getElementById('company-selected-text');
-            const selectedIdInput = document.getElementById('selected-company-id');
-            const companyRadios = document.querySelectorAll('input[name="company_id"]');
-            
-            // Toggle dropdown
-            dropdownButton.addEventListener('click', function(e) {
-                e.stopPropagation();
-                dropdown.classList.toggle('hidden');
-            });
-            
-            // Close dropdown when clicking outside
-            document.addEventListener('click', function() {
-                dropdown.classList.add('hidden');
-            });
-            
-            // Prevent dropdown from closing when clicking inside it
-            dropdown.addEventListener('click', function(e) {
-                e.stopPropagation();
-            });
-            
-            // Handle radio button changes
-            companyRadios.forEach(radio => {
-                radio.addEventListener('change', function() {
-                    if (this.checked) {
-                        const label = this.nextElementSibling.textContent.trim();
-                        selectedText.textContent = label;
-                        selectedIdInput.value = this.value;
-                        dropdown.classList.add('hidden');
-                        
-                        // Submit the form when a company is selected
-                        const form = this.closest('form');
-                        if (form) {
-                            form.submit();
-                        }
+                foreach ($incidentsByStatus as $status) {
+                    if ($status['status'] === 'pending') {
+                        $openIncidents = $status['count'];
                     }
+                    if ($status['status'] === 'resolved') {
+                        $resolvedIncidents = $status['count'];
+                    }
+                }
+
+                // Calculate average resolution time (in hours)
+                $resolutionQuery = "SELECT AVG(TIMESTAMPDIFF(HOUR, d.actual_start_time, COALESCE(d.actual_end_time, NOW()))) as avg_hours 
+                              FROM incidents i
+                              JOIN downtime_incidents d ON i.incident_id = d.incident_id
+                              WHERE d.actual_start_time IS NOT NULL
+                              AND i.created_at BETWEEN ? AND ? " .
+                    ($companyId ? "AND i.incident_id IN (SELECT incident_id FROM incident_affected_companies WHERE company_id = ?) " : "");
+                $stmt = $pdo->prepare($resolutionQuery);
+                $stmt->execute($params);
+                $avgResolution = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($avgResolution && $avgResolution['avg_hours'] !== null) {
+                    $avgHours = round($avgResolution['avg_hours'], 1);
+                    $avgResolutionTime = $avgHours < 24
+                        ? $avgHours . ' hours'
+                        : round($avgHours / 24, 1) . ' days';
+                }
+                ?>
+
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <div class="flex items-center">
+                        <div
+                            class="w-14 h-14 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mr-4">
+                            <i class="fas fa-exclamation-triangle text-blue-600 text-2xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Total <br> Incidents</p>
+                            <h3 class="text-2xl font-bold text-gray-800 dark:text-white">
+                                <?= number_format($totalIncidents) ?>
+                            </h3>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <div class="flex items-center">
+                        <div
+                            class="w-14 h-14 rounded-full bg-yellow-100 flex items-center justify-center flex-shrink-0 mr-4">
+                            <i class="fas fa-clock text-yellow-600 text-2xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Pending <br> Incidents</p>
+                            <h3 class="text-2xl font-bold text-gray-800 dark:text-white">
+                                <?= number_format($openIncidents) ?>
+                            </h3>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <div class="flex items-center">
+                        <div
+                            class="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0 mr-4">
+                            <i class="fas fa-check-circle text-green-600 text-2xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Resolved Incidents</p>
+                            <h3 class="text-2xl font-bold text-gray-800 dark:text-white">
+                                <?= number_format($resolvedIncidents) ?>
+                            </h3>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <div class="flex items-center">
+                        <div
+                            class="w-14 h-14 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mr-4">
+                            <i class="fas fa-stopwatch text-purple-600 text-2xl"></i>
+                        </div>
+                        <div>
+                            <p class="text-gray-500 dark:text-gray-400 text-sm font-medium">Avg. Resolution Time</p>
+                            <h3 class="text-2xl font-bold text-gray-800 dark:text-white"><?= $avgResolutionTime ?></h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row 1 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                <!-- Incidents by Status -->
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Incidents by Status</h3>
+                    <div class="chart-container">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Monthly Trend -->
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Monthly Incident Trend</h3>
+                    <div class="chart-container">
+                        <canvas id="trendChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row 2 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                <!-- Incidents by Company -->
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Incidents by Company</h3>
+                    <div class="chart-container">
+                        <canvas id="companyChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Impact Level Distribution -->
+                <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+                    <h3 class="text-lg font-semibold text-gray-800 dark:text-white mb-4">Impact Level Distribution</h3>
+                    <div class="chart-container">
+                        <canvas id="impactChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // Company dropdown functionality
+            document.addEventListener('DOMContentLoaded', function () {
+                const dropdownButton = document.getElementById('company-dropdown-button');
+                const dropdown = document.getElementById('company-dropdown');
+                const selectedText = document.getElementById('company-selected-text');
+                const selectedIdInput = document.getElementById('selected-company-id');
+                const companyRadios = document.querySelectorAll('input[name="company_id"]');
+
+                // Toggle dropdown
+                dropdownButton.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    dropdown.classList.toggle('hidden');
+                });
+
+                // Close dropdown when clicking outside
+                document.addEventListener('click', function () {
+                    dropdown.classList.add('hidden');
+                });
+
+                // Prevent dropdown from closing when clicking inside it
+                dropdown.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                });
+
+                // Handle radio button changes
+                companyRadios.forEach(radio => {
+                    radio.addEventListener('change', function () {
+                        if (this.checked) {
+                            const label = this.nextElementSibling.textContent.trim();
+                            selectedText.textContent = label;
+                            selectedIdInput.value = this.value;
+                            dropdown.classList.add('hidden');
+
+                            // Submit the form when a company is selected
+                            const form = this.closest('form');
+                            if (form) {
+                                form.submit();
+                            }
+                        }
+                    });
                 });
             });
-        });
-        // Incidents by Status (Doughnut Chart)
-        const statusCtx = document.getElementById('statusChart').getContext('2d');
-        new Chart(statusCtx, {
-            type: 'doughnut',
-            data: {
-                labels: <?= json_encode($statusLabels) ?>,
-                datasets: [{
-                    data: <?= json_encode($statusData) ?>,
-                    backgroundColor: <?= json_encode($statusColors) ?>,
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'right',
-                    }
-                }
-            }
-        });
-
-        // Monthly Trend (Bar Chart)
-        const trendCtx = document.getElementById('trendChart').getContext('2d');
-        new Chart(trendCtx, {
-            type: 'bar',
-            data: {
-                labels: <?= json_encode($monthlyLabels) ?>,
-                datasets: [{
-                    label: 'Number of Incidents',
-                    data: <?= json_encode($monthlyData) ?>,
-                    backgroundColor: [
-                        '#3b82f6', '#60a5fa', '#93c5fd', '#3b82f6', '#60a5fa', 
-                        '#93c5fd', '#3b82f6', '#60a5fa', '#93c5fd', '#3b82f6',
-                        '#60a5fa', '#93c5fd', '#3b82f6'
-                    ],
-                    borderWidth: 0,
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: {
-                            precision: 0
+            // Incidents by Status (Doughnut Chart)
+            const statusCtx = document.getElementById('statusChart').getContext('2d');
+            new Chart(statusCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: <?= json_encode($statusLabels) ?>,
+                    datasets: [{
+                        data: <?= json_encode($statusData) ?>,
+                        backgroundColor: <?= json_encode($statusColors) ?>,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
                         }
                     }
-                },
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                }
-            }
-        });
-
-        // Incidents by Company (Bar Chart)
-        const companyCtx = document.getElementById('companyChart').getContext('2d');
-        new Chart(companyCtx, {
-            type: 'bar',
-            data: {
-                labels: <?= json_encode($companyLabels) ?>,
-                datasets: [{
-                    label: 'Number of Incidents',
-                    data: <?= json_encode($companyData) ?>,
-                    backgroundColor: [
-                        '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899',
-                        '#14b8a6', '#f97316', '#6366f1', '#f43f5e', '#06b6d4'
-                    ],
-                    borderWidth: 0,
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                indexAxis: 'y',
-                scales: {
-                    x: {
-                        beginAtZero: true,
-                        ticks: {
-                            precision: 0
-                        }
-                    }
-                },
-                plugins: {
-                    legend: {
-                        display: false
-                    }
-                }
-            }
-        });
-
-        // Impact Level Distribution (Pie Chart)
-        const impactCtx = document.getElementById('impactChart').getContext('2d');
-        
-        // Prepare data for the chart
-        let impactLabels = <?= json_encode($impactLabels) ?>;
-        let impactData = <?= json_encode($impactData) ?>;
-        
-        // Define impact level colors with clear severity indicators
-        const impactColorMap = {
-            'Critical': '#dc2626',  // Dark Red - Immediate attention required
-            'High': '#ef4444',      // Red - High severity
-            'Medium': '#f59e0b',    // Amber - Medium severity
-            'Low': '#10b981'        // Green - Low severity
-        };
-        // Color Guide:
-        // - Critical (Dark Red): Complete system outage or critical business impact
-        // - High (Red): Major impact on business operations
-        // - Medium (Amber): Moderate impact, some business functions affected
-        // - Low (Green): Minor impact, minimal business disruption
-        
-        // Sort impact levels in order of severity for consistent color mapping
-        const severityOrder = ['Critical', 'High', 'Medium', 'Low'];
-        const sortedData = [];
-        const sortedLabels = [];
-        const sortedColors = [];
-        
-        // If no data, show empty state
-        if (impactData.length === 0 || impactData.every(val => val === 0)) {
-            impactLabels = ['No Data'];
-            impactData = [1];
-            sortedColors.push('#e5e7eb');
-        } else {
-            // Sort the data by severity
-            severityOrder.forEach(level => {
-                const index = impactLabels.findIndex(label => 
-                    label.toLowerCase() === level.toLowerCase()
-                );
-                if (index !== -1) {
-                    sortedLabels.push(impactLabels[index]);
-                    sortedData.push(impactData[index]);
-                    sortedColors.push(impactColorMap[level]);
                 }
             });
-            
-            // Update the original arrays with sorted data
-            impactLabels = sortedLabels;
-            impactData = sortedData;
-        }
-        
-        new Chart(impactCtx, {
-            type: 'pie',
-            data: {
-                labels: impactLabels,
-                datasets: [{
-                    data: impactData,
-                    backgroundColor: sortedColors.length ? sortedColors : impactColors,
-                    borderWidth: 1,
-                    borderColor: '#fff',
-                    borderWidth: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'right',
-                        labels: {
-                            padding: 20,
-                            usePointStyle: true,
-                            pointStyle: 'circle',
-                            font: {
-                                size: 12
+
+            // Monthly Trend (Bar Chart)
+            const trendCtx = document.getElementById('trendChart').getContext('2d');
+            new Chart(trendCtx, {
+                type: 'bar',
+                data: {
+                    labels: <?= json_encode($monthlyLabels) ?>,
+                    datasets: [{
+                        label: 'Number of Incidents',
+                        data: <?= json_encode($monthlyData) ?>,
+                        backgroundColor: [
+                            '#3b82f6', '#60a5fa', '#93c5fd', '#3b82f6', '#60a5fa',
+                            '#93c5fd', '#3b82f6', '#60a5fa', '#93c5fd', '#3b82f6',
+                            '#60a5fa', '#93c5fd', '#3b82f6'
+                        ],
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0
                             }
                         }
                     },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                if (context.label === 'No Data') {
-                                    return 'No impact data available';
-                                }
-                                const label = context.label || '';
-                                const value = context.raw || 0;
-                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                const percentage = Math.round((value / total) * 100);
-                                return `${label}: ${value} (${percentage}%)`;
-                            }
-                        },
-                        displayColors: true,
-                        usePointStyle: true
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
                     }
                 }
-            }
-        });
-    </script>
+            });
 
-    </div>
+            // Incidents by Company (Bar Chart)
+            const companyCtx = document.getElementById('companyChart').getContext('2d');
+            new Chart(companyCtx, {
+                type: 'bar',
+                data: {
+                    labels: <?= json_encode($companyLabels) ?>,
+                    datasets: [{
+                        label: 'Number of Incidents',
+                        data: <?= json_encode($companyData) ?>,
+                        backgroundColor: [
+                            '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899',
+                            '#14b8a6', '#f97316', '#6366f1', '#f43f5e', '#06b6d4'
+                        ],
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+
+            // Impact Level Distribution (Pie Chart)
+            const impactCtx = document.getElementById('impactChart').getContext('2d');
+
+            // Prepare data for the chart
+            let impactLabels = <?= json_encode($impactLabels) ?>;
+            let impactData = <?= json_encode($impactData) ?>;
+
+            // Define impact level colors with clear severity indicators
+            const impactColorMap = {
+                'Critical': '#dc2626',  // Dark Red - Immediate attention required
+                'High': '#ef4444',      // Red - High severity
+                'Medium': '#f59e0b',    // Amber - Medium severity
+                'Low': '#10b981'        // Green - Low severity
+            };
+            // Color Guide:
+            // - Critical (Dark Red): Complete system outage or critical business impact
+            // - High (Red): Major impact on business operations
+            // - Medium (Amber): Moderate impact, some business functions affected
+            // - Low (Green): Minor impact, minimal business disruption
+
+            // Sort impact levels in order of severity for consistent color mapping
+            const severityOrder = ['Critical', 'High', 'Medium', 'Low'];
+            const sortedData = [];
+            const sortedLabels = [];
+            const sortedColors = [];
+
+            // If no data, show empty state
+            if (impactData.length === 0 || impactData.every(val => val === 0)) {
+                impactLabels = ['No Data'];
+                impactData = [1];
+                sortedColors.push('#e5e7eb');
+            } else {
+                // Sort the data by severity
+                severityOrder.forEach(level => {
+                    const index = impactLabels.findIndex(label =>
+                        label.toLowerCase() === level.toLowerCase()
+                    );
+                    if (index !== -1) {
+                        sortedLabels.push(impactLabels[index]);
+                        sortedData.push(impactData[index]);
+                        sortedColors.push(impactColorMap[level]);
+                    }
+                });
+
+                // Update the original arrays with sorted data
+                impactLabels = sortedLabels;
+                impactData = sortedData;
+            }
+
+            new Chart(impactCtx, {
+                type: 'pie',
+                data: {
+                    labels: impactLabels,
+                    datasets: [{
+                        data: impactData,
+                        backgroundColor: sortedColors.length ? sortedColors : impactColors,
+                        borderWidth: 1,
+                        borderColor: '#fff',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                padding: 20,
+                                usePointStyle: true,
+                                pointStyle: 'circle',
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) {
+                                    if (context.label === 'No Data') {
+                                        return 'No impact data available';
+                                    }
+                                    const label = context.label || '';
+                                    const value = context.raw || 0;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = Math.round((value / total) * 100);
+                                    return `${label}: ${value} (${percentage}%)`;
+                                }
+                            },
+                            displayColors: true,
+                            usePointStyle: true
+                        }
+                    }
+                }
+            });
+        </script>
+
+        </div>
     </main>
 
 </body>
+
 </html>
