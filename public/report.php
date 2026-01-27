@@ -82,7 +82,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $incident_type_id = $_POST['incident_type_id'] === 'all' ? 'all' : (filter_var($_POST['incident_type_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
     $impact_level = in_array($_POST['impact_level'] ?? '', ['Low', 'Medium', 'High', 'Critical']) ? $_POST['impact_level'] : 'Low';
     $root_cause = trim(filter_var($_POST['root_cause'] ?? '', FILTER_SANITIZE_STRING));
-    $actual_start_time = $_POST['actual_start_time'] ?? date('Y-m-d H:i:s');
+    
+    // Handle incident date and time
+    $incident_date = $_POST['incident_date'] ?? date('Y-m-d');
+    $incident_time = $_POST['incident_time'] ?? date('H:i');
+    $actual_start_time = $incident_date . ' ' . $incident_time . ':00';
+    
     $is_planned = isset($_POST['is_planned']) ? 1 : 0;
     $downtime_category = in_array($_POST['downtime_category'] ?? '', ['Network', 'Server', 'Maintenance', 'Third-party', 'Other']) ? $_POST['downtime_category'] : 'Other';
     $status = 'pending';
@@ -147,6 +152,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $errors[] = "Root cause is too long (max 1000 characters).";
     }
     
+    // Validate incident date/time
+    $datetime = DateTime::createFromFormat('Y-m-d H:i:s', $actual_start_time);
+    if (!$datetime) {
+        $errors[] = "Invalid incident date or time format.";
+    } elseif ($datetime > new DateTime()) {
+        $errors[] = "Incident date/time cannot be in the future.";
+    }
+    
     if (!empty($errors)) {
         $error = implode(" ", $errors);
     } else {
@@ -166,8 +179,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                 // 1. Insert into incidents table
                 $sql = "INSERT INTO incidents 
-                        (service_id, component_id, incident_type_id, impact_level, root_cause, attachment_path, status, reported_by) 
-                        VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :root_cause, :attachment_path, :status, :reported_by)";
+                        (service_id, component_id, incident_type_id, impact_level, root_cause, attachment_path, actual_start_time, status, reported_by) 
+                        VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :root_cause, :attachment_path, :actual_start_time, :status, :reported_by)";
                 
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute([
@@ -177,6 +190,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     ':impact_level' => $impact_level,
                     ':root_cause' => $root_cause,
                     ':attachment_path' => $attachment_path,
+                    ':actual_start_time' => $actual_start_time,
                     ':status' => $status,
                     ':reported_by' => $_SESSION['user_id']
                 ]);
@@ -456,6 +470,45 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Click to select multiple companies</p>
                     </div>
 
+                    <!-- Incident Date & Time -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            When Did the Incident Occur? <span class="text-red-500">*</span>
+                        </label>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Incident Date -->
+                            <div>
+                                <label for="incident_date" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                                    Date
+                                </label>
+                                <input type="date" 
+                                       name="incident_date" 
+                                       id="incident_date" 
+                                       value="<?= isset($_POST['incident_date']) ? htmlspecialchars($_POST['incident_date']) : date('Y-m-d') ?>" 
+                                       max="<?= date('Y-m-d') ?>"
+                                       required
+                                       class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                            
+                            <!-- Incident Time -->
+                            <div>
+                                <label for="incident_time" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                                    Time
+                                </label>
+                                <input type="time" 
+                                       name="incident_time" 
+                                       id="incident_time" 
+                                       value="<?= isset($_POST['incident_time']) ? htmlspecialchars($_POST['incident_time']) : date('H:i') ?>" 
+                                       required
+                                       class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                        </div>
+                        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            Specify the actual time when the incident started. This can be in the past but not in the future.
+                        </p>
+                    </div>
+
                     <!-- File Upload -->
                     <div class="space-y-2">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -681,6 +734,37 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             if (document.getElementById('service_id').value) {
                 filterDetails();
             }
+            
+            // Incident date/time validation
+            const incidentDate = document.getElementById('incident_date');
+            const incidentTime = document.getElementById('incident_time');
+            
+            // Validate date is not in the future
+            incidentDate.addEventListener('change', function() {
+                const selectedDate = new Date(this.value);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                if (selectedDate > today) {
+                    alert('Incident date cannot be in the future. Please select today or an earlier date.');
+                    this.value = '<?= date('Y-m-d') ?>';
+                }
+            });
+            
+            // Validate datetime combination is not in the future
+            function validateDateTime() {
+                if (!incidentDate.value || !incidentTime.value) return;
+                
+                const selectedDateTime = new Date(incidentDate.value + 'T' + incidentTime.value);
+                const now = new Date();
+                
+                if (selectedDateTime > now) {
+                    alert('Incident date/time cannot be in the future. The time has been adjusted to the current time.');
+                    incidentTime.value = '<?= date('H:i') ?>';
+                }
+            }
+            
+            incidentTime.addEventListener('change', validateDateTime);
         });
     </script>
 </body>

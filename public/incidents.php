@@ -17,10 +17,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             ':user_name' => trim($_POST['user_name']),
             ':update_text' => trim($_POST['update_text'])
         ]);
-    } elseif ($_POST['action'] === 'update_status' && isset($_POST['incident_id'], $_POST['status'], $_POST['user_name'])) {
+    } elseif ($_POST['action'] === 'update_status' && isset($_POST['incident_id'], $_POST['status'])) {
         $status = $_POST['status'];
         $incidentId = $_POST['incident_id'];
-        $userName = trim($_POST['user_name']);
+        $userName = $_SESSION['full_name']; // Use full name from session
 
         // Prepare the SQL based on status
         $sql = "UPDATE incidents 
@@ -312,7 +312,7 @@ try {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No incidents reported</h3>
+                        <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No incidents reported yet</h3>
                         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Get started by reporting a new incident.
                         </p>
                     </div>
@@ -359,10 +359,17 @@ try {
                                             <i class="fas fa-check mr-1"></i> Mark as Resolved
                                         </button>
                                     <?php else: ?>
-                                        <span class="text-sm text-green-600 font-medium">
-                                            Resolved by <?php echo htmlspecialchars($incident['resolved_by'] ?? 'System'); ?> on
-                                            <?php echo $incident['resolved_at'] ? date('M j, Y g:i A', strtotime($incident['resolved_at'])) : 'Unknown'; ?>
-                                        </span>
+                                        <div class="mt-2 sm:mt-0 flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                                            <span class="text-sm text-green-600 dark:text-green-400 font-medium">
+                                                Resolved by <?php echo htmlspecialchars($incident['resolved_by'] ?? 'System'); ?> on
+                                                <?php echo $incident['resolved_at'] ? date('M j, Y g:i A', strtotime($incident['resolved_at'])) : 'Unknown'; ?>
+                                            </span>
+                                            <button type="button"
+                                                onclick="showReopenModal(<?php echo $incident['incident_id']; ?>, '<?php echo addslashes(htmlspecialchars($incident['service_name'])); ?>')"
+                                                class="inline-flex items-center px-3 py-1.5 border border-orange-600 dark:border-orange-500 text-xs font-medium rounded shadow-sm text-orange-600 dark:text-orange-400 bg-white dark:bg-gray-800 hover:bg-orange-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">
+                                                <i class="fas fa-redo mr-1"></i> Reopen Incident
+                                            </button>
+                                        </div>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -425,14 +432,30 @@ try {
                                         <?php endif; ?>
                                     </div>
 
-                                    <!-- RIGHT COLUMN: Updates -->
+                                    <!-- RIGHT COLUMN: Action Taken -->
                                     <div class="lg:border-l lg:border-gray-200 dark:lg:border-gray-700 lg:pl-6">
+                                        <!-- Reported By -->
+                                        <div class="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+                                            <p class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                                                Reported By</p>
+                                            <div class="flex items-center gap-2">
+                                                <i class="fas fa-user-circle text-gray-400 dark:text-gray-500"></i>
+                                                <span class="text-sm font-medium text-gray-900 dark:text-white">
+                                                    <?php echo htmlspecialchars($incident['user_name']); ?>
+                                                </span>
+                                                <span class="text-xs text-gray-500 dark:text-gray-400">
+                                                    •
+                                                    <?php echo date('M j, Y g:i A', strtotime($incident['created_at'])); ?>
+                                                </span>
+                                            </div>
+                                        </div>
+
                                         <h4
                                             class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-3">
-                                            Updates (<?php echo $incident['update_count']; ?>)</h4>
+                                            Action Taken (<?php echo $incident['update_count']; ?>)</h4>
 
                                         <?php if (empty($incident['updates'])): ?>
-                                            <p class="text-sm text-gray-500 dark:text-gray-400 italic">No updates available.</p>
+                                            <p class="text-sm text-gray-500 dark:text-gray-400 italic">No action taken yet.</p>
                                         <?php else: ?>
                                             <div class="space-y-3 mb-4">
                                                 <?php foreach ($incident['updates'] as $update): ?>
@@ -452,23 +475,34 @@ try {
                                         <?php endif; ?>
 
                                         <!-- Add Update Form - Inline -->
-                                        <form method="POST" class="mt-3">
-                                            <input type="hidden" name="action" value="add_update">
-                                            <input type="hidden" name="incident_id"
-                                                value="<?php echo $incident['incident_id']; ?>">
-                                            <div class="flex flex-col sm:flex-row gap-2">
-                                                <input type="text" name="user_name"
-                                                    value="<?= htmlspecialchars($_SESSION['full_name']) ?>"
-                                                    placeholder="Your Name" readonly
-                                                    class="w-full sm:w-32 text-sm border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-600 text-gray-500 dark:text-gray-400 rounded-md shadow-sm cursor-not-allowed py-1.5 px-3">
-                                                <input type="text" name="update_text" placeholder="Add an update..." required
-                                                    class="flex-1 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 py-1.5 px-3">
-                                                <button type="submit"
-                                                    class="w-full sm:w-auto inline-flex items-center justify-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-gray-900 hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
-                                                    Post
-                                                </button>
+                                        <?php if ($incident['status'] === 'pending'): ?>
+                                            <form method="POST" class="mt-3">
+                                                <input type="hidden" name="action" value="add_update">
+                                                <input type="hidden" name="incident_id"
+                                                    value="<?php echo $incident['incident_id']; ?>">
+                                                <div class="flex flex-col sm:flex-row gap-2">
+                                                    <input type="text" name="user_name"
+                                                        value="<?= htmlspecialchars($_SESSION['full_name']) ?>"
+                                                        placeholder="Your Name" readonly
+                                                        class="w-full sm:w-32 text-sm border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-600 text-gray-500 dark:text-gray-400 rounded-md shadow-sm cursor-not-allowed py-1.5 px-3">
+                                                    <input type="text" name="update_text" placeholder="Describe action taken..."
+                                                        required
+                                                        class="flex-1 text-sm border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 py-1.5 px-3">
+                                                    <button type="submit"
+                                                        class="w-full sm:w-auto inline-flex items-center justify-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-gray-900 hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500">
+                                                        Post
+                                                    </button>
+                                                </div>
+                                            </form>
+                                        <?php else: ?>
+                                            <div
+                                                class="mt-3 p-3 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-md">
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center">
+                                                    <i class="fas fa-lock mr-2"></i>
+                                                    This incident is resolved. Reopen the incident to add action taken.
+                                                </p>
                                             </div>
-                                        </form>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                             </div>
@@ -623,7 +657,7 @@ try {
 
                 <form id="resolveForm" method="POST" class="space-y-4">
                     <input type="hidden" name="action" value="update_status">
-                    <input type="hidden" name="issue_id" id="modal_issue_id" value="">
+                    <input type="hidden" name="incident_id" id="modal_incident_id" value="">
                     <input type="hidden" name="status" value="resolved">
 
                     <div>
@@ -642,6 +676,51 @@ try {
                         <button type="submit"
                             class="inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                             <i class="fas fa-check mr-2"></i> Mark as Resolved
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reopen Issue Modal -->
+    <div id="reopenModal"
+        class="hidden fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50 p-4 transition-opacity duration-300">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full transform transition-all duration-300 scale-95 opacity-0"
+            id="reopenModalContent">
+            <div class="p-6">
+                <div class="flex items-center mb-4">
+                    <div
+                        class="flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-orange-100 dark:bg-orange-900/30">
+                        <i class="fas fa-exclamation-triangle text-orange-600 dark:text-orange-400 text-xl"></i>
+                    </div>
+                    <div class="ml-4">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-white">Reopen Incident</h3>
+                        <p class="text-sm text-gray-500 dark:text-gray-400" id="reopenModalServiceName"></p>
+                    </div>
+                </div>
+
+                <div
+                    class="mb-4 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md">
+                    <p class="text-sm text-orange-800 dark:text-orange-300">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        Are you sure you want to reopen this resolved incident? This will allow new updates to be added.
+                    </p>
+                </div>
+
+                <form id="reopenForm" method="POST" class="space-y-4">
+                    <input type="hidden" name="action" value="update_status">
+                    <input type="hidden" name="incident_id" id="reopen_incident_id" value="">
+                    <input type="hidden" name="status" value="pending">
+
+                    <div class="flex justify-end space-x-3 pt-2">
+                        <button type="button" onclick="hideReopenModal()"
+                            class="inline-flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-600 shadow-sm text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                            class="inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">
+                            <i class="fas fa-redo mr-2"></i> Reopen Incident
                         </button>
                     </div>
                 </form>
@@ -709,7 +788,9 @@ try {
                     });
 
                     // Show/hide empty state
-                    if (visibleCount === 0) {
+                    // Only show "no results" if there are incidents but they're all filtered
+                    const hasIncidents = incidents.length > 0;
+                    if (visibleCount === 0 && hasIncidents) {
                         noResults.classList.remove('hidden');
                     } else {
                         noResults.classList.add('hidden');
@@ -734,7 +815,8 @@ try {
                 if (activeButton) activeButton.click();
             } else {
                 // Default to 'all' if no status in URL
-                document.querySelector('.status-toggle[data-status="all"]').click();
+                const allButton = document.querySelector('.status-toggle[data-status="all"]');
+                if (allButton) allButton.click();
             }
         });
 
@@ -744,7 +826,7 @@ try {
             const modalContent = document.getElementById('modalContent');
 
             // Set the incident ID and service name
-            document.getElementById('modal_issue_id').value = incidentId;
+            document.getElementById('modal_incident_id').value = incidentId;
             document.getElementById('modalServiceName').textContent = `Service: ${serviceName}`;
 
             // Show modal with animation
@@ -794,8 +876,53 @@ try {
 
         // Close modal with ESC key
         document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && !document.getElementById('resolveModal').classList.contains('hidden')) {
-                hideResolveModal();
+            if (e.key === 'Escape') {
+                if (!document.getElementById('resolveModal').classList.contains('hidden')) {
+                    hideResolveModal();
+                }
+                if (!document.getElementById('reopenModal').classList.contains('hidden')) {
+                    hideReopenModal();
+                }
+            }
+        });
+
+        // Reopen Modal Functions
+        function showReopenModal(incidentId, serviceName) {
+            const modal = document.getElementById('reopenModal');
+            const modalContent = document.getElementById('reopenModalContent');
+
+            // Set the incident ID and service name
+            document.getElementById('reopen_incident_id').value = incidentId;
+            document.getElementById('reopenModalServiceName').textContent = `Service: ${serviceName}`;
+
+            // Show modal with animation
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modalContent.classList.remove('opacity-0', 'scale-95');
+                modalContent.classList.add('opacity-100', 'scale-100');
+            }, 10);
+        }
+
+        function hideReopenModal() {
+            const modal = document.getElementById('reopenModal');
+            const modalContent = document.getElementById('reopenModalContent');
+
+            // Hide with animation
+            modalContent.classList.remove('opacity-100', 'scale-100');
+            modalContent.classList.add('opacity-0', 'scale-95');
+
+            // Hide modal after animation
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                // Reset form
+                document.getElementById('reopenForm').reset();
+            }, 200);
+        }
+
+        // Close reopen modal when clicking outside
+        document.getElementById('reopenModal').addEventListener('click', function (e) {
+            if (e.target === this) {
+                hideReopenModal();
             }
         });
     </script>
