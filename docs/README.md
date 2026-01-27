@@ -279,7 +279,7 @@ This is the easiest way to get started, especially if you're new to PHP developm
 #### Step 6: Access the Application
 
 1. **Open Your Browser**:
-   - Navigate to: [http://localhost/etz-downtime-tracker-final-test-app/](http://localhost/etz-downtime-tracker-final-test-app/)
+   - Navigate to: [http://localhost/etz-downtime-tracker-final-test-app/](http://localhost/etz-downtime-tracker-final-test-app/public)
    - You should see the **Dashboard** page
 
 2. **Verify Installation**:
