@@ -123,5 +123,27 @@ function isAdminMobileActive($page) {
                 <i class="fas fa-arrow-left mr-2"></i>Back to App
             </a>
         </div>
+        
+        <!-- User Profile (Mobile) -->
+        <?php if ($currentUser): ?>
+        <div class="pt-4 pb-3 border-t border-gray-200 dark:border-gray-700">
+            <div class="flex items-center px-4">
+                <div class="flex-shrink-0">
+                    <div class="flex items-center justify-center w-10 h-10 rounded-full bg-purple-600 text-white font-semibold">
+                        <?= strtoupper(substr($currentUser['full_name'], 0, 1)) ?>
+                    </div>
+                </div>
+                <div class="ml-3">
+                    <div class="text-base font-medium text-gray-800 dark:text-white"><?= htmlspecialchars($currentUser['full_name']) ?></div>
+                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400"><?= htmlspecialchars($currentUser['username']) ?></div>
+                </div>
+            </div>
+            <div class="mt-3 px-2 space-y-1">
+                <a href="../../public/logout.php" class="block px-3 py-2 rounded-lg text-base font-medium text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-150">
+                    <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
     </div>
 </nav>
