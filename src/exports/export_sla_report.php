@@ -34,7 +34,7 @@ try {
     $endDateTime = (new DateTime($endDate))->modify('+1 day'); // Include end date
     $dateInterval = $startDateTime->diff($endDateTime);
     $totalMinutesInPeriod = $dateInterval->days * 24 * 60;
-    
+
     // Get SLA target for the company if filtered
     $slaTarget = 99.99; // Default SLA target
     if ($companyId) {
@@ -45,46 +45,48 @@ try {
 
     // Build the query to get report data
     $query = "SELECT 
-                c.company_id,
+                iac.company_id,
                 c.company_name,
                 s.service_name,
-                ir.issue_id,
-                ir.created_at as incident_date,
-                ir.resolved_at as resolved_date,
+                i.incident_id,
+                i.created_at as incident_date,
+                i.resolved_at as resolved_date,
                 TIMESTAMPDIFF(MINUTE, 
-                    GREATEST(ir.created_at, :start1), 
-                    LEAST(IFNULL(ir.resolved_at, NOW()), :end1)
+                    GREATEST(COALESCE(di.actual_start_time, i.created_at), :start1), 
+                    LEAST(COALESCE(di.actual_end_time, i.resolved_at, NOW()), :end1)
                 ) as downtime_minutes,
-                ir.impact_level,
-                ir.root_cause
-              FROM issues_reported ir
-              JOIN companies c ON ir.company_id = c.company_id
-              JOIN services s ON ir.service_id = s.service_id
-              WHERE ir.created_at < :end2 
-              AND (ir.resolved_at IS NULL OR ir.resolved_at > :start2)";
-    
+                i.impact_level,
+                i.root_cause
+              FROM incidents i
+              JOIN services s ON i.service_id = s.service_id
+              JOIN incident_affected_companies iac ON i.incident_id = iac.incident_id
+              JOIN companies c ON iac.company_id = c.company_id
+              LEFT JOIN downtime_incidents di ON i.incident_id = di.incident_id
+              WHERE i.created_at < :end2 
+              AND (COALESCE(di.actual_end_time, i.resolved_at, NOW()) > :start2)";
+
     $params = [
         'start1' => $startDate . ' 00:00:00',
         'end1' => $endDate . ' 23:59:59',
         'start2' => $startDate . ' 00:00:00',
         'end2' => $endDate . ' 23:59:59'
     ];
-    
+
     if ($companyId) {
-        $query .= " AND ir.company_id = :company_id";
+        $query .= " AND iac.company_id = :company_id";
         $params['company_id'] = $companyId;
     }
-    
-    $query .= " ORDER BY c.company_name, s.service_name, ir.created_at DESC";
-    
+
+    $query .= " ORDER BY c.company_name, s.service_name, i.created_at DESC";
+
     $stmt = $pdo->prepare($query);
     $stmt->execute($params);
     $incidents = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
     // Calculate total downtime per company and service
     $downtimeSummary = [];
     $totalDowntimeMinutes = 0;
-    
+
     foreach ($incidents as $incident) {
         $key = $incident['company_id'] . '_' . $incident['service_name'];
         if (!isset($downtimeSummary[$key])) {
@@ -94,7 +96,7 @@ try {
                 'total_downtime' => 0
             ];
         }
-        $downtimeMinutes = max(0, (int)$incident['downtime_minutes']);
+        $downtimeMinutes = max(0, (int) $incident['downtime_minutes']);
         $downtimeSummary[$key]['total_downtime'] += $downtimeMinutes;
         $totalDowntimeMinutes += $downtimeMinutes;
     }
@@ -102,7 +104,7 @@ try {
     // Create new Spreadsheet object
     $spreadsheet = new Spreadsheet();
     $sheet = $spreadsheet->getActiveSheet();
-    
+
     // Set document properties
     $spreadsheet->getProperties()
         ->setCreator('eTranzact Downtime Report')
@@ -112,18 +114,18 @@ try {
 
     // Add headers
     $headers = [
-        'Company', 
-        'Service', 
+        'Company',
+        'Service',
         'Total Minutes in Period',
         'Downtime (minutes)',
         'Uptime %',
         'SLA Target %',
-        'Incident Date', 
-        'Resolved Date', 
-        'Impact Level', 
+        'Incident Date',
+        'Resolved Date',
+        'Impact Level',
         'Root Cause'
     ];
-    
+
     // Set headers with simple bold styling
     $sheet->fromArray($headers, NULL, 'A1');
     $headerStyle = [
@@ -131,19 +133,19 @@ try {
         'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT]
     ];
     $sheet->getStyle('A1:' . chr(65 + count($headers) - 1) . '1')->applyFromArray($headerStyle);
-    
+
     // Add data
     $row = 2;
     foreach ($incidents as $incident) {
         $companyKey = $incident['company_id'] . '_' . $incident['service_name'];
-        $downtimeMinutes = max(0, (int)$incident['downtime_minutes']);
+        $downtimeMinutes = max(0, (int) $incident['downtime_minutes']);
         // Calculate uptime percentage, ensuring it doesn't exceed the SLA target
-        $uptimePercentage = $totalMinutesInPeriod > 0 
+        $uptimePercentage = $totalMinutesInPeriod > 0
             ? max(0, min($slaTarget, (($totalMinutesInPeriod - $downtimeMinutes) / $totalMinutesInPeriod) * 100))
             : $slaTarget;
-        
+
         $slaStatus = $uptimePercentage >= $slaTarget ? 'MET' : 'NOT MET';
-        
+
         $sheet->fromArray([
             $incident['company_name'],
             $incident['service_name'],
@@ -156,61 +158,61 @@ try {
             $incident['impact_level'],
             $incident['root_cause']
         ], NULL, 'A' . $row);
-        
+
         // Format percentage cells
         $sheet->getStyle('E' . $row . ':F' . $row)
             ->getNumberFormat()
             ->setFormatCode('0.00"%"');
-            
+
         $row++;
     }
-    
+
     // Add summary section
     $summaryRow = $row + 2;
     $sheet->setCellValue('A' . $summaryRow, 'Summary');
     $sheet->getStyle('A' . $summaryRow)->getFont()->setBold(true);
-    
+
     $summaryRow++;
     $sheet->fromArray(['Total Period (minutes):', $totalMinutesInPeriod], NULL, 'A' . $summaryRow);
     $summaryRow++;
     $sheet->fromArray(['Total Downtime (minutes):', $totalDowntimeMinutes], NULL, 'A' . $summaryRow);
     $summaryRow++;
-    
-    $overallUptime = $totalMinutesInPeriod > 0 
+
+    $overallUptime = $totalMinutesInPeriod > 0
         ? max(0, min($slaTarget, (($totalMinutesInPeriod - $totalDowntimeMinutes) / $totalMinutesInPeriod) * 100))
         : $slaTarget;
     $sheet->fromArray(['Overall Uptime %:', $overallUptime], NULL, 'A' . $summaryRow);
     $sheet->getStyle('B' . $summaryRow)->getNumberFormat()->setFormatCode('0.00"%"');
     $summaryRow++;
-    
+
     $sheet->fromArray(['SLA Target %:', $slaTarget], NULL, 'A' . $summaryRow);
     $sheet->getStyle('B' . $summaryRow)->getNumberFormat()->setFormatCode('0.00"%"');
     $summaryRow++;
-    
+
     // Auto-size columns
     foreach (range('A', 'L') as $columnID) {
         $sheet->getColumnDimension($columnID)->setAutoSize(true);
     }
-    
-    
+
+
     // Freeze the header row
     $sheet->freezePane('A2');
-    
+
     // Set the active sheet index to the first sheet
     $spreadsheet->setActiveSheetIndex(0);
-    
+
     // Clear any previous output
     ob_end_clean();
-    
+
     // Redirect output to a client's web browser (Excel2007)
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment;filename="SLA_Report_' . ($companyId ? preg_replace('/[^a-zA-Z0-9_-]/', '_', $incidents[0]['company_name']) . '_' : '') . $startDate . '_to_' . $endDate . '.xlsx"');
     header('Cache-Control: max-age=0');
-    
+
     $writer = new Xlsx($spreadsheet);
     $writer->save('php://output');
     exit;
-    
+
 } catch (Exception $e) {
     die('Error generating Excel file: ' . $e->getMessage());
 }
