@@ -89,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body class="relative min-h-screen">
     <!-- Background Image with Overlay -->
     <div class="fixed inset-0 z-0">
-        <img src="<?= url('../../src/assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
+        <img src="<?= url('assets/mainbg.jpg') ?>" alt="Background" class="w-full h-full object-cover">
         <div class="absolute inset-0 bg-white/90 dark:bg-gray-900/95"></div>
     </div>
 
