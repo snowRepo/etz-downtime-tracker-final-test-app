@@ -29,6 +29,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         // Add resolved_by and resolved_at for resolved status
         if ($status === 'resolved') {
             $sql .= ", resolved_by = :user_id, resolved_at = NOW()";
+            
+            // Add root_cause and lessons_learned if provided
+            if (isset($_POST['root_cause']) && !empty(trim($_POST['root_cause']))) {
+                $sql .= ", root_cause = :root_cause";
+            }
+            if (isset($_POST['lessons_learned']) && !empty(trim($_POST['lessons_learned']))) {
+                $sql .= ", lessons_learned = :lessons_learned";
+            }
         } else {
             $sql .= ", resolved_by = NULL, resolved_at = NULL";
         }
@@ -42,6 +50,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         ];
         if ($status === 'resolved') {
             $params[':user_id'] = $_SESSION['user_id'];
+            
+            // Add root_cause and lessons_learned to params if provided
+            if (isset($_POST['root_cause']) && !empty(trim($_POST['root_cause']))) {
+                $params[':root_cause'] = trim($_POST['root_cause']);
+            }
+            if (isset($_POST['lessons_learned']) && !empty(trim($_POST['lessons_learned']))) {
+                $params[':lessons_learned'] = trim($_POST['lessons_learned']);
+            }
         }
 
         $stmt->execute($params);
@@ -362,7 +378,7 @@ try {
                                     </div>
                                     <?php if ($incident['status'] === 'pending'): ?>
                                         <button type="button"
-                                            onclick="showResolveModal(<?php echo $incident['incident_id']; ?>, '<?php echo addslashes(htmlspecialchars($incident['service_name'])); ?>')"
+                                            onclick="showResolveModal(<?php echo $incident['incident_id']; ?>, '<?php echo addslashes(htmlspecialchars($incident['service_name'])); ?>', '<?php echo addslashes(htmlspecialchars($incident['root_cause'] ?? '')); ?>')"
                                             class="mt-2 sm:mt-0 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                                             <i class="fas fa-check mr-1"></i> Mark as Resolved
                                         </button>
@@ -676,6 +692,28 @@ try {
                             readonly autocomplete="off">
                     </div>
 
+                    <!-- Root Cause -->
+                    <div>
+                        <label for="resolve_root_cause" class="block text-sm font-medium text-gray-700">
+                            Root Cause <span class="text-gray-400">(Optional)</span>
+                        </label>
+                        <textarea id="resolve_root_cause" name="root_cause" rows="3"
+                            placeholder="Describe what caused this incident..."
+                            class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
+                        <p class="mt-1 text-xs text-gray-500">Update or add the root cause if it wasn't specified earlier</p>
+                    </div>
+
+                    <!-- Lessons Learned -->
+                    <div>
+                        <label for="resolve_lessons_learned" class="block text-sm font-medium text-gray-700">
+                            Lessons Learned <span class="text-red-500">*</span>
+                        </label>
+                        <textarea id="resolve_lessons_learned" name="lessons_learned" rows="4" required
+                            placeholder="What did we learn from this incident? How can we prevent it in the future?"
+                            class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
+                        <p class="mt-1 text-xs text-gray-500">Document key insights and preventive measures</p>
+                    </div>
+
                     <div class="flex justify-end space-x-3 pt-2">
                         <button type="button" onclick="hideResolveModal()"
                             class="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
@@ -829,20 +867,24 @@ try {
         });
 
         // Resolve Modal Functions
-        function showResolveModal(incidentId, serviceName) {
+        function showResolveModal(incidentId, serviceName, rootCause = '') {
             const modal = document.getElementById('resolveModal');
             const modalContent = document.getElementById('modalContent');
 
             // Set the incident ID and service name
             document.getElementById('modal_incident_id').value = incidentId;
             document.getElementById('modalServiceName').textContent = `Service: ${serviceName}`;
+            
+            // Pre-populate root cause if it exists
+            document.getElementById('resolve_root_cause').value = rootCause;
 
             // Show modal with animation
             modal.classList.remove('hidden');
             setTimeout(() => {
                 modalContent.classList.remove('opacity-0', 'scale-95');
                 modalContent.classList.add('opacity-100', 'scale-100');
-                document.getElementById('resolve_name').focus();
+                // Focus on lessons learned field since that's required
+                document.getElementById('resolve_lessons_learned').focus();
             }, 10);
         }
 

@@ -76,6 +76,176 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         die("Invalid request");
     }
 
+    // Handle past incident reporting
+    if (isset($_POST['action']) && $_POST['action'] === 'report_past_incident') {
+        // Sanitize and validate inputs
+        $service_id = $_POST['service_id'] === 'all' ? 'all' : filter_var($_POST['service_id'] ?? null, FILTER_VALIDATE_INT);
+        $component_id = $_POST['component_id'] === 'all' ? 'all' : (filter_var($_POST['component_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
+        $incident_type_id = $_POST['incident_type_id'] === 'all' ? 'all' : (filter_var($_POST['incident_type_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
+        $impact_level = in_array($_POST['impact_level'] ?? '', ['Low', 'Medium', 'High', 'Critical']) ? $_POST['impact_level'] : 'Low';
+        $root_cause = trim(filter_var($_POST['root_cause'] ?? '', FILTER_SANITIZE_STRING));
+        
+        // Get start and end date/time
+        $start_datetime = $_POST['start_datetime'] ?? '';
+        $end_datetime = $_POST['end_datetime'] ?? '';
+        
+        $is_planned = isset($_POST['is_planned']) ? 1 : 0;
+        $downtime_category = in_array($_POST['downtime_category'] ?? '', ['Network', 'Server', 'Maintenance', 'Third-party', 'Other']) ? $_POST['downtime_category'] : 'Other';
+        
+        // Validate and deduplicate company IDs
+        $company_ids = [];
+        if (!empty($_POST['company_ids']) && is_array($_POST['company_ids'])) {
+            foreach ($_POST['company_ids'] as $company_id) {
+                if ($company_id === 'all') {
+                    $company_ids = array_map(function($c) { return $c['company_id']; }, $otherCompanies);
+                    break;
+                }
+                $company_id = filter_var($company_id, FILTER_VALIDATE_INT);
+                if ($company_id) {
+                    $company_ids[] = $company_id;
+                }
+            }
+            $company_ids = array_values(array_unique($company_ids));
+        }
+        
+        // Handle file upload
+        $attachment_path = null;
+        if (isset($_FILES['evidence']) && $_FILES['evidence']['error'] === UPLOAD_ERR_OK) {
+            $fileTmpPath = $_FILES['evidence']['tmp_name'];
+            $fileName = $_FILES['evidence']['name'];
+            $fileNameCmps = explode(".", $fileName);
+            $fileExtension = strtolower(end($fileNameCmps));
+            $newFileName = md5(time() . $fileName) . '.' . $fileExtension;
+            $allowedfileExtensions = array('jpg', 'gif', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx');
+            
+            if (in_array($fileExtension, $allowedfileExtensions)) {
+                $uploadFileDir = __DIR__ . '/uploads/incidents/';
+                $dest_path = $uploadFileDir . $newFileName;
+                if (move_uploaded_file($fileTmpPath, $dest_path)) {
+                    $attachment_path = 'uploads/incidents/' . $newFileName;
+                }
+            }
+        }
+        
+        // Validation
+        $errors = [];
+        if (empty($service_id)) {
+            $errors[] = "Please select a service.";
+        }
+        if (empty($company_ids)) {
+            $errors[] = "Please select at least one company.";
+        }
+        if (strlen($root_cause) > 1000) {
+            $errors[] = "Root cause is too long (max 1000 characters).";
+        }
+        
+        // Validate start and end datetime
+        $start_dt = DateTime::createFromFormat('Y-m-d\TH:i', $start_datetime);
+        $end_dt = DateTime::createFromFormat('Y-m-d\TH:i', $end_datetime);
+        $now = new DateTime();
+        
+        if (!$start_dt) {
+            $errors[] = "Invalid start date/time format.";
+        } elseif ($start_dt > $now) {
+            $errors[] = "Start date/time cannot be in the future.";
+        }
+        
+        if (!$end_dt) {
+            $errors[] = "Invalid end date/time format.";
+        } elseif ($end_dt > $now) {
+            $errors[] = "End date/time cannot be in the future.";
+        }
+        
+        if ($start_dt && $end_dt && $end_dt <= $start_dt) {
+            $errors[] = "End date/time must be after start date/time.";
+        }
+        
+        if (!empty($errors)) {
+            $error = implode(" ", $errors);
+        } else {
+            // Start transaction
+            $pdo->beginTransaction();
+            $success = false;
+            
+            try {
+                // Handle expansion
+                $service_ids = ($service_id === 'all') ? array_map(function($s) { return $s['service_id']; }, $services) : [$service_id];
+                
+                foreach ($service_ids as $s_id) {
+                    $c_id = ($component_id === 'all') ? null : $component_id;
+                    $t_id = ($incident_type_id === 'all') ? null : $incident_type_id;
+                    
+                    // 1. Insert into incidents table with resolved status
+                    $sql = "INSERT INTO incidents 
+                            (service_id, component_id, incident_type_id, impact_level, root_cause, attachment_path, actual_start_time, status, reported_by, resolved_by, resolved_at) 
+                            VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :root_cause, :attachment_path, :actual_start_time, 'resolved', :reported_by, :resolved_by, :resolved_at)";
+                    
+                    $stmt = $pdo->prepare($sql);
+                    $stmt->execute([
+                        ':service_id' => $s_id,
+                        ':component_id' => $c_id,
+                        ':incident_type_id' => $t_id,
+                        ':impact_level' => $impact_level,
+                        ':root_cause' => $root_cause,
+                        ':attachment_path' => $attachment_path,
+                        ':actual_start_time' => $start_dt->format('Y-m-d H:i:s'),
+                        ':reported_by' => $_SESSION['user_id'],
+                        ':resolved_by' => $_SESSION['user_id'],
+                        ':resolved_at' => $end_dt->format('Y-m-d H:i:s')
+                    ]);
+                    $incident_id = $pdo->lastInsertId();
+                    
+                    // 2. Insert affected companies
+                    $iac_sql = "INSERT INTO incident_affected_companies (incident_id, company_id) VALUES (:incident_id, :company_id)";
+                    $iac_stmt = $pdo->prepare($iac_sql);
+                    foreach ($company_ids as $co_id) {
+                        $iac_stmt->execute([
+                            ':incident_id' => $incident_id,
+                            ':company_id' => $co_id
+                        ]);
+                    }
+                    
+                    // 3. Insert into downtime_incidents table with both start and end times
+                    $downtime_sql = "INSERT INTO downtime_incidents 
+                                    (incident_id, actual_start_time, actual_end_time, is_planned, downtime_category)
+                                    VALUES (:incident_id, :actual_start_time, :actual_end_time, :is_planned, :downtime_category)";
+                    $downtime_stmt = $pdo->prepare($downtime_sql);
+                    $downtime_stmt->execute([
+                        ':incident_id' => $incident_id,
+                        ':actual_start_time' => $start_dt->format('Y-m-d H:i:s'),
+                        ':actual_end_time' => $end_dt->format('Y-m-d H:i:s'),
+                        ':is_planned' => $is_planned,
+                        ':downtime_category' => $downtime_category
+                    ]);
+                }
+                
+                $pdo->commit();
+                $success = true;
+                
+                // Log incident creation
+                require_once __DIR__ . '/../src/includes/activity_logger.php';
+                logIncidentAction($_SESSION['user_id'], 'created_past_incident', null, [
+                    'services_count' => count($service_ids),
+                    'impact_level' => $impact_level,
+                    'companies_count' => count($company_ids),
+                    'downtime_minutes' => $start_dt->diff($end_dt)->i + ($start_dt->diff($end_dt)->h * 60) + ($start_dt->diff($end_dt)->days * 24 * 60)
+                ]);
+                
+            } catch (Exception $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $error = "Error: " . $e->getMessage();
+            }
+            
+            if ($success) {
+                $_SESSION['success'] = "Past incident(s) reported successfully!";
+                header("Location: report.php");
+                exit();
+            }
+        }
+    }
+
     // Sanitize and validate inputs
     $service_id = $_POST['service_id'] === 'all' ? 'all' : filter_var($_POST['service_id'] ?? null, FILTER_VALIDATE_INT);
     $component_id = $_POST['component_id'] === 'all' ? 'all' : (filter_var($_POST['component_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
@@ -302,12 +472,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden rounded-xl" style="box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);">
                 <div class="px-6 py-5 sm:px-8 border-b border-gray-200 dark:border-gray-700">
-                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-                        Report New Incident
-                    </h3>
-                    <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        Fill in the details below to report a new downtime incident
-                    </p>
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+                                Report New Incident
+                            </h3>
+                            <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                Fill in the details below to report a new downtime incident
+                            </p>
+                        </div>
+                        <button type="button" onclick="showPastIncidentModal()"
+                            class="inline-flex items-center px-4 py-2 border border-blue-600 dark:border-blue-500 rounded-md shadow-sm text-sm font-medium text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                            <i class="fas fa-history mr-2"></i>
+                            Log Past Incident
+                        </button>
+                    </div>
                 </div>
                 
                 <?php if (!empty($error)): ?>
@@ -619,6 +798,285 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         </div>
     </main>
 
+    <!-- Past Incident Modal -->
+    <div id="pastIncidentModal"
+        class="hidden fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50 p-4 transition-opacity duration-300"
+        x-data="{ 
+            fileName: '', 
+            filePreview: null,
+            handleFileChange(event) {
+                const file = event.target.files[0];
+                this.fileName = file ? file.name : '';
+                if (file && file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => { this.filePreview = e.target.result; };
+                    reader.readAsDataURL(file);
+                } else {
+                    this.filePreview = null;
+                }
+            }
+        }">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto transform transition-all duration-300 scale-95 opacity-0"
+            id="pastIncidentModalContent">
+            <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-800 z-10">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center">
+                            <i class="fas fa-history mr-2 text-blue-600"></i>
+                            Log Past Incident
+                        </h3>
+                        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                            Report an incident that occurred in the past with start (down) and end (up) time
+                        </p>
+                    </div>
+                    <button type="button" onclick="hidePastIncidentModal()"
+                        class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+            </div>
+
+            <form action="report.php" method="POST" enctype="multipart/form-data" class="px-6 pb-6 pt-4 space-y-6" id="pastIncidentForm">
+                <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                <input type="hidden" name="action" value="report_past_incident">
+
+                <!-- Info Alert -->
+                <div class="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 p-4 rounded-r-lg">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                            <i class="fas fa-info-circle text-blue-500 text-lg"></i>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm text-blue-800 dark:text-blue-300">
+                                Use this form to log incidents that were forgotten or missed. Specify when the service went down (start) and when it came back up (end) for accurate SLA tracking.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Start and End DateTime (Prominent) -->
+                <div class="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg border-2 border-blue-200 dark:border-blue-800">
+                    <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                        <i class="fas fa-clock mr-1"></i> Incident Timeline <span class="text-red-500">*</span>
+                    </label>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Start DateTime -->
+                        <div>
+                            <label for="start_datetime" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                <i class="fas fa-arrow-down text-red-500 mr-1"></i> Down Time (Start)
+                            </label>
+                            <input type="datetime-local" 
+                                   name="start_datetime" 
+                                   id="start_datetime" 
+                                   required
+                                   max="<?= date('Y-m-d\TH:i') ?>"
+                                   class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        
+                        <!-- End DateTime -->
+                        <div>
+                            <label for="end_datetime" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                <i class="fas fa-arrow-up text-green-500 mr-1"></i> Up Time (End)
+                            </label>
+                            <input type="datetime-local" 
+                                   name="end_datetime" 
+                                   id="end_datetime" 
+                                   required
+                                   max="<?= date('Y-m-d\TH:i') ?>"
+                                   class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                    </div>
+                    <p class="mt-2 text-xs text-gray-600 dark:text-gray-400" id="durationDisplay">
+                        <i class="fas fa-stopwatch mr-1"></i> Duration: Not calculated
+                    </p>
+                </div>
+
+                <!-- Service, Component, Type Row -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- Service Selection -->
+                    <div>
+                        <label for="past_service_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Service Affected <span class="text-red-500">*</span>
+                        </label>
+                        <select name="service_id" id="past_service_id" required onchange="filterPastIncidentDetails()"
+                            class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select service...</option>
+                            <option value="all">All Services</option>
+                            <?php foreach ($services as $service): ?>
+                                <option value="<?= $service['service_id'] ?>">
+                                    <?= htmlspecialchars($service['service_name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <!-- Component Selection -->
+                    <div>
+                        <label for="past_component_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Component Affected
+                        </label>
+                        <select name="component_id" id="past_component_id"
+                            class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select component...</option>
+                            <option value="all" class="past-component-option">All Components</option>
+                            <?php foreach ($components as $component): ?>
+                                <option value="<?= $component['component_id'] ?>" data-service="<?= $component['service_id'] ?>" class="past-component-option hidden">
+                                    <?= htmlspecialchars($component['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <!-- Incident Type Selection -->
+                    <div>
+                        <label for="past_incident_type_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Incident Type
+                        </label>
+                        <select name="incident_type_id" id="past_incident_type_id"
+                            class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Select type...</option>
+                            <option value="all" class="past-type-option">All Incident Types</option>
+                            <?php foreach ($incidentTypes as $type): ?>
+                                <option value="<?= $type['type_id'] ?>" data-service="<?= $type['service_id'] ?>" class="past-type-option hidden">
+                                    <?= htmlspecialchars($type['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Companies Affected -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Companies Affected <span class="text-red-500">*</span>
+                    </label>
+                    <div class="mt-1 relative">
+                        <button type="button" id="past-company-dropdown-button" class="relative w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm pl-3 pr-10 py-2 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-gray-900 dark:text-white">
+                            <span id="past-company-selected-text" class="block truncate">Select companies...</span>
+                            <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                                <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </span>
+                        </button>
+                        <div id="past-company-dropdown" class="hidden absolute z-10 mt-1 w-full bg-white dark:bg-gray-700 shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 dark:ring-gray-600 overflow-auto focus:outline-none sm:text-sm">
+                            <?php foreach ($companies as $company): ?>
+                                <div class="flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600">
+                                    <input type="checkbox" id="past-company-<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>" 
+                                           name="company_ids[]" 
+                                           value="<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>"
+                                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded past-company-checkbox">
+                                    <label for="past-company-<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                        <?php echo htmlspecialchars($company['company_name']); ?>
+                                    </label>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Click to select multiple companies</p>
+                </div>
+
+                <!-- Impact, Category, Planned Row -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- Impact Level -->
+                    <div>
+                        <label for="past_impact_level" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Impact Level <span class="text-red-500">*</span>
+                        </label>
+                        <select name="impact_level" id="past_impact_level" required
+                            class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                            <option value="Low">Low</option>
+                            <option value="Medium">Medium</option>
+                            <option value="High">High</option>
+                            <option value="Critical">Critical</option>
+                        </select>
+                    </div>
+
+                    <!-- Category -->
+                    <div>
+                        <label for="past_downtime_category" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Downtime Category
+                        </label>
+                        <select name="downtime_category" id="past_downtime_category"
+                            class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                            <option value="Network">Network</option>
+                            <option value="Server">Server</option>
+                            <option value="Maintenance">Maintenance</option>
+                            <option value="Third-party">Third-party</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+
+                    <!-- Planned -->
+                    <div class="flex items-center mt-8">
+                        <input id="past_is_planned" name="is_planned" type="checkbox"
+                            class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <label for="past_is_planned" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                            Was this planned?
+                        </label>
+                    </div>
+                </div>
+
+                <!-- File Upload -->
+                <div class="space-y-2">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Evidence / Attachment
+                    </label>
+                    <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md hover:border-blue-400 dark:hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-700/50">
+                        <div class="space-y-1 text-center">
+                            <template x-if="!filePreview">
+                                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                            </template>
+                            <template x-if="filePreview">
+                                <div class="relative inline-block">
+                                    <img :src="filePreview" class="mx-auto h-48 w-auto rounded-lg shadow-sm object-cover">
+                                    <button @click="filePreview = null; fileName = ''; $refs.pastFileInput.value = ''" type="button" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </template>
+                            <div class="flex text-sm text-gray-600 dark:text-gray-400">
+                                <label for="past_evidence" class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 hover:text-blue-500 px-2 py-0.5 border border-blue-600/20">
+                                    <span>Upload a file</span>
+                                    <input id="past_evidence" name="evidence" type="file" class="sr-only" x-ref="pastFileInput" @change="handleFileChange">
+                                </label>
+                                <p class="pl-1">or drag and drop</p>
+                            </div>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">PNG, JPG, GIF, PDF, DOC up to 10MB</p>
+                            <p x-show="fileName" x-text="fileName" class="text-sm font-medium text-blue-600 dark:text-blue-400"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Root Cause -->
+                <div>
+                    <label for="past_root_cause" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Root Cause (Optional)
+                    </label>
+                    <div class="mt-1">
+                        <textarea id="past_root_cause" name="root_cause" rows="3" class="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border border-gray-300 dark:border-gray-600 rounded-md p-3 bg-white dark:bg-gray-700 dark:text-white"></textarea>
+                    </div>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Briefly describe what caused the issue (if known)</p>
+                </div>
+
+                <div class="pt-5 border-t border-gray-200 dark:border-gray-700">
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" onclick="hidePastIncidentModal()"
+                            class="bg-white dark:bg-gray-700 py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                            class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            <i class="fas fa-save mr-2"></i> Log Past Incident
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -773,6 +1231,170 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
             
             incidentTime.addEventListener('change', validateDateTime);
+
+            // ===== Past Incident Modal Functions =====
+            
+            // Modal control functions
+            window.showPastIncidentModal = function() {
+                const modal = document.getElementById('pastIncidentModal');
+                const modalContent = document.getElementById('pastIncidentModalContent');
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    modalContent.classList.remove('scale-95', 'opacity-0');
+                    modalContent.classList.add('scale-100', 'opacity-100');
+                }, 10);
+            };
+
+            window.hidePastIncidentModal = function() {
+                const modal = document.getElementById('pastIncidentModal');
+                const modalContent = document.getElementById('pastIncidentModalContent');
+                modalContent.classList.remove('scale-100', 'opacity-100');
+                modalContent.classList.add('scale-95', 'opacity-0');
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    // Reset form
+                    document.getElementById('pastIncidentForm').reset();
+                    document.getElementById('past-company-selected-text').textContent = 'Select companies...';
+                    document.getElementById('durationDisplay').innerHTML = '<i class="fas fa-stopwatch mr-1"></i> Duration: Not calculated';
+                }, 300);
+            };
+
+            // Company dropdown for past incident modal
+            const pastDropdownButton = document.getElementById('past-company-dropdown-button');
+            const pastDropdown = document.getElementById('past-company-dropdown');
+            const pastCompanyCheckboxes = document.querySelectorAll('.past-company-checkbox');
+            
+            pastDropdownButton.addEventListener('click', function(e) {
+                e.stopPropagation();
+                pastDropdown.classList.toggle('hidden');
+            });
+            
+            document.addEventListener('click', function(event) {
+                if (!pastDropdownButton.contains(event.target) && !pastDropdown.contains(event.target)) {
+                    pastDropdown.classList.add('hidden');
+                }
+            });
+            
+            pastCompanyCheckboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    if (this.value === 'all') {
+                        const isChecked = this.checked;
+                        pastCompanyCheckboxes.forEach(cb => {
+                            if (cb !== this) {
+                                cb.checked = isChecked;
+                            }
+                        });
+                    } else {
+                        const allCheckbox = document.querySelector('.past-company-checkbox[value="all"]');
+                        if (allCheckbox) {
+                            if (!this.checked) {
+                                allCheckbox.checked = false;
+                            } else {
+                                const allChecked = Array.from(pastCompanyCheckboxes)
+                                    .filter(cb => cb.value !== 'all')
+                                    .every(cb => cb.checked);
+                                allCheckbox.checked = allChecked;
+                            }
+                        }
+                    }
+                    updatePastSelectedCompanies();
+                });
+            });
+            
+            function updatePastSelectedCompanies() {
+                const selectedNames = [];
+                document.querySelectorAll('.past-company-checkbox:checked').forEach(checkbox => {
+                    selectedNames.push(checkbox.nextElementSibling.textContent.trim());
+                });
+                const selectedText = selectedNames.length > 0 
+                    ? selectedNames.join(', ') 
+                    : 'Select companies...';
+                document.getElementById('past-company-selected-text').textContent = selectedText;
+            }
+
+            // Service filtering for past incident modal
+            window.filterPastIncidentDetails = function() {
+                const serviceId = document.getElementById('past_service_id').value;
+                const componentId = document.getElementById('past_component_id');
+                const incidentTypeId = document.getElementById('past_incident_type_id');
+                
+                componentId.value = '';
+                incidentTypeId.value = '';
+                
+                document.querySelectorAll('.past-component-option').forEach(opt => {
+                    if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
+                        opt.classList.remove('hidden');
+                    } else {
+                        opt.classList.add('hidden');
+                    }
+                });
+                
+                document.querySelectorAll('.past-type-option').forEach(opt => {
+                    if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
+                        opt.classList.remove('hidden');
+                    } else {
+                        opt.classList.add('hidden');
+                    }
+                });
+            };
+
+            // DateTime validation and duration calculation
+            const startDatetime = document.getElementById('start_datetime');
+            const endDatetime = document.getElementById('end_datetime');
+            const durationDisplay = document.getElementById('durationDisplay');
+
+            function calculateDuration() {
+                if (!startDatetime.value || !endDatetime.value) {
+                    durationDisplay.innerHTML = '<i class="fas fa-stopwatch mr-1"></i> Duration: Not calculated';
+                    return;
+                }
+
+                const start = new Date(startDatetime.value);
+                const end = new Date(endDatetime.value);
+                const now = new Date();
+
+                // Validate times
+                if (start > now) {
+                    durationDisplay.innerHTML = '<i class="fas fa-exclamation-triangle mr-1 text-red-500"></i> <span class="text-red-600 dark:text-red-400">Start time cannot be in the future</span>';
+                    return;
+                }
+
+                if (end > now) {
+                    durationDisplay.innerHTML = '<i class="fas fa-exclamation-triangle mr-1 text-red-500"></i> <span class="text-red-600 dark:text-red-400">End time cannot be in the future</span>';
+                    return;
+                }
+
+                if (end <= start) {
+                    durationDisplay.innerHTML = '<i class="fas fa-exclamation-triangle mr-1 text-red-500"></i> <span class="text-red-600 dark:text-red-400">End time must be after start time</span>';
+                    return;
+                }
+
+                // Calculate duration
+                const diffMs = end - start;
+                const diffMins = Math.floor(diffMs / 60000);
+                const hours = Math.floor(diffMins / 60);
+                const minutes = diffMins % 60;
+                const days = Math.floor(hours / 24);
+                const remainingHours = hours % 24;
+
+                let durationText = '';
+                if (days > 0) {
+                    durationText = `${days} day${days > 1 ? 's' : ''}, ${remainingHours} hour${remainingHours !== 1 ? 's' : ''}, ${minutes} min${minutes !== 1 ? 's' : ''}`;
+                } else if (hours > 0) {
+                    durationText = `${hours} hour${hours > 1 ? 's' : ''}, ${minutes} min${minutes !== 1 ? 's' : ''}`;
+                } else {
+                    durationText = `${minutes} minute${minutes !== 1 ? 's' : ''}`;
+                }
+
+                durationDisplay.innerHTML = `<i class="fas fa-stopwatch mr-1 text-green-500"></i> <span class="text-green-700 dark:text-green-400 font-medium">Duration: ${durationText} (${diffMins} total minutes)</span>`;
+            }
+
+            if (startDatetime) {
+                startDatetime.addEventListener('change', calculateDuration);
+            }
+            if (endDatetime) {
+                endDatetime.addEventListener('change', calculateDuration);
+            }
         });
     </script>
     </div> <!-- End Content Wrapper -->

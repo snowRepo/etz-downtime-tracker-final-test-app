@@ -50,6 +50,10 @@ function isAdminMobileActive($page)
                         class="<?php echo isAdminActive('activity_logs.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
                         <i class="fas fa-history mr-2"></i>Activity Logs
                     </a>
+                    <a href="<?= url('admin/manage.php') ?>"
+                        class="<?php echo isAdminActive('manage.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
+                        <i class="fas fa-cogs mr-2"></i>Manage System
+                    </a>
                 </div>
 
                 <!-- Right Side Actions -->
@@ -146,6 +150,10 @@ function isAdminMobileActive($page)
             <a href="<?= url('admin/activity_logs.php') ?>"
                 class="<?php echo isAdminMobileActive('activity_logs.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
                 <i class="fas fa-history mr-2"></i>Activity Logs
+            </a>
+            <a href="<?= url('admin/manage.php') ?>"
+                class="<?php echo isAdminMobileActive('manage.php'); ?> block pl-3 pr-4 py-2.5 border-l-4 text-sm font-medium transition-colors duration-150">
+                <i class="fas fa-cogs mr-2"></i>Manage System
             </a>
             <a href="<?= url('index.php') ?>"
                 class="block mx-3 my-2 px-4 py-2.5 text-center text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors duration-150">

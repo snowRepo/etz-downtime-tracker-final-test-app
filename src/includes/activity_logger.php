@@ -268,7 +268,7 @@ function getActivityLogs($filters = [], $limit = 50, $offset = 0)
 
     // Filter by user ID
     if (!empty($filters['user_id'])) {
-        $where[] = "user_id = ?";
+        $where[] = "l.user_id = ?";
         $params[] = $filters['user_id'];
     }
 
@@ -286,12 +286,12 @@ function getActivityLogs($filters = [], $limit = 50, $offset = 0)
 
     // Filter by date range
     if (!empty($filters['start_date'])) {
-        $where[] = "created_at >= ?";
+        $where[] = "l.created_at >= ?";
         $params[] = $filters['start_date'];
     }
 
     if (!empty($filters['end_date'])) {
-        $where[] = "created_at <= ?";
+        $where[] = "l.created_at <= ?";
         $params[] = $filters['end_date'] . ' 23:59:59';
     }
 
@@ -338,7 +338,7 @@ function getActivityLogsCount($filters = [])
 
     // Same filtering logic as getActivityLogs
     if (!empty($filters['user_id'])) {
-        $where[] = "user_id = ?";
+        $where[] = "l.user_id = ?";
         $params[] = $filters['user_id'];
     }
 
@@ -354,12 +354,12 @@ function getActivityLogsCount($filters = [])
     }
 
     if (!empty($filters['start_date'])) {
-        $where[] = "created_at >= ?";
+        $where[] = "l.created_at >= ?";
         $params[] = $filters['start_date'];
     }
 
     if (!empty($filters['end_date'])) {
-        $where[] = "created_at <= ?";
+        $where[] = "l.created_at <= ?";
         $params[] = $filters['end_date'] . ' 23:59:59';
     }
 
