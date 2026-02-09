@@ -91,6 +91,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
     $is_planned = isset($_POST['is_planned']) ? 1 : 0;
     $downtime_category = in_array($_POST['downtime_category'] ?? '', ['Network', 'Server', 'Maintenance', 'Third-party', 'Other']) ? $_POST['downtime_category'] : 'Other';
+    $priority = in_array($_POST['priority'] ?? '', ['Low', 'Medium', 'High', 'Urgent']) ? $_POST['priority'] : 'Medium';
     $status = 'pending';
     
     // Validate and deduplicate company IDs
@@ -110,34 +111,62 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $company_ids = array_values(array_unique($company_ids));
     }
     
-    // Handle file upload
-    $attachment_path = null;
-    if (isset($_FILES['evidence']) && $_FILES['evidence']['error'] === UPLOAD_ERR_OK) {
-        $fileTmpPath = $_FILES['evidence']['tmp_name'];
-        $fileName = $_FILES['evidence']['name'];
-        $fileSize = $_FILES['evidence']['size'];
-        $fileType = $_FILES['evidence']['type'];
-        $fileNameCmps = explode(".", $fileName);
-        $fileExtension = strtolower(end($fileNameCmps));
+    // Handle multiple file uploads
+    $attachment_path = null; // Keep for backward compatibility (first file)
+    $uploaded_files = [];
+    
+    if (isset($_FILES['evidence']) && !empty($_FILES['evidence']['name'][0])) {
+        $allowedfileExtensions = array('jpg', 'jpeg', 'gif', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt');
+        $uploadFileDir = __DIR__ . '/uploads/incidents/';
+        $maxFileSize = 10 * 1024 * 1024; // 10MB
+        
+        // Loop through each file
+        $fileCount = count($_FILES['evidence']['name']);
+        for ($i = 0; $i < $fileCount; $i++) {
+            // Check if file was uploaded without errors
+            if ($_FILES['evidence']['error'][$i] === UPLOAD_ERR_OK) {
+                $fileTmpPath = $_FILES['evidence']['tmp_name'][$i];
+                $fileName = $_FILES['evidence']['name'][$i];
+                $fileSize = $_FILES['evidence']['size'][$i];
+                $fileType = $_FILES['evidence']['type'][$i];
+                $fileNameCmps = explode(".", $fileName);
+                $fileExtension = strtolower(end($fileNameCmps));
 
-        // Sanitize file name
-        $newFileName = md5(time() . $fileName) . '.' . $fileExtension;
+                // Validate file size
+                if ($fileSize > $maxFileSize) {
+                    $errors[] = "File '{$fileName}' exceeds maximum size of 10MB.";
+                    continue;
+                }
 
-        // Allowed file extensions
-        $allowedfileExtensions = array('jpg', 'gif', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx');
+                // Validate file extension
+                if (!in_array($fileExtension, $allowedfileExtensions)) {
+                    $errors[] = "File '{$fileName}' has invalid type. Allowed: " . implode(', ', $allowedfileExtensions);
+                    continue;
+                }
 
-        if (in_array($fileExtension, $allowedfileExtensions)) {
-            // Directory in which the uploaded file will be moved
-            $uploadFileDir = __DIR__ . '/uploads/incidents/';
-            $dest_path = $uploadFileDir . $newFileName;
+                // Sanitize file name
+                $newFileName = md5(time() . $fileName . $i) . '.' . $fileExtension;
+                $dest_path = $uploadFileDir . $newFileName;
 
-            if (move_uploaded_file($fileTmpPath, $dest_path)) {
-                $attachment_path = 'uploads/incidents/' . $newFileName;
-            } else {
-                $errors[] = 'There was some error moving the file to upload directory. Please make sure the upload directory is writable by web server.';
+                // Move uploaded file
+                if (move_uploaded_file($fileTmpPath, $dest_path)) {
+                    $uploaded_files[] = [
+                        'file_path' => 'uploads/incidents/' . $newFileName,
+                        'file_name' => $fileName,
+                        'file_type' => $fileType,
+                        'file_size' => $fileSize
+                    ];
+                    
+                    // Set first file as attachment_path for backward compatibility
+                    if ($attachment_path === null) {
+                        $attachment_path = 'uploads/incidents/' . $newFileName;
+                    }
+                } else {
+                    $errors[] = "Error uploading file '{$fileName}'. Please ensure upload directory is writable.";
+                }
+            } elseif ($_FILES['evidence']['error'][$i] !== UPLOAD_ERR_NO_FILE) {
+                $errors[] = "Error with file '{$_FILES['evidence']['name'][$i]}': Upload error code {$_FILES['evidence']['error'][$i]}.";
             }
-        } else {
-            $errors[] = 'Upload failed. Allowed file types: ' . implode(',', $allowedfileExtensions);
         }
     }
 
@@ -180,8 +209,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                 // 1. Insert into incidents table
                 $sql = "INSERT INTO incidents 
-                        (service_id, component_id, incident_type_id, impact_level, root_cause, attachment_path, actual_start_time, status, reported_by) 
-                        VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :root_cause, :attachment_path, :actual_start_time, :status, :reported_by)";
+                        (service_id, component_id, incident_type_id, impact_level, priority, root_cause, attachment_path, actual_start_time, status, reported_by) 
+                        VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :priority, :root_cause, :attachment_path, :actual_start_time, :status, :reported_by)";
                 
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute([
@@ -189,6 +218,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     ':component_id' => $c_id,
                     ':incident_type_id' => $t_id,
                     ':impact_level' => $impact_level,
+                    ':priority' => $priority,
                     ':root_cause' => $root_cause,
                     ':attachment_path' => $attachment_path,
                     ':actual_start_time' => $actual_start_time,
@@ -207,17 +237,43 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     ]);
                 }
                 
-                // 3. Insert into downtime_incidents table
-                $downtime_sql = "INSERT INTO downtime_incidents 
-                                (incident_id, actual_start_time, is_planned, downtime_category)
-                                VALUES (:incident_id, :actual_start_time, :is_planned, :downtime_category)";
-                $downtime_stmt = $pdo->prepare($downtime_sql);
-                $downtime_stmt->execute([
-                    ':incident_id' => $incident_id,
-                    ':actual_start_time' => $actual_start_time,
-                    ':is_planned' => $is_planned,
-                    ':downtime_category' => $downtime_category
-                ]);
+                // 3. Insert into downtime_incidents table ONLY if:
+                //    - "Causes Downtime" is checked AND
+                //    - "Is Planned Maintenance" is NOT checked
+                // This ensures only UNPLANNED downtime affects SLA calculations
+                $causes_downtime = isset($_POST['causes_downtime']) && $_POST['causes_downtime'] == '1';
+                
+                if ($causes_downtime && $is_planned != 1) {
+                    $downtime_sql = "INSERT INTO downtime_incidents 
+                                    (incident_id, actual_start_time, is_planned, downtime_category)
+                                    VALUES (:incident_id, :actual_start_time, :is_planned, :downtime_category)";
+                    $downtime_stmt = $pdo->prepare($downtime_sql);
+                    $downtime_stmt->execute([
+                        ':incident_id' => $incident_id,
+                        ':actual_start_time' => $actual_start_time,
+                        ':is_planned' => $is_planned,
+                        ':downtime_category' => $downtime_category
+                    ]);
+                }
+                
+                
+                // 4. Insert file attachments into incident_attachments table
+                if (!empty($uploaded_files)) {
+                    $attachment_sql = "INSERT INTO incident_attachments 
+                                      (incident_id, file_path, file_name, file_type, file_size) 
+                                      VALUES (:incident_id, :file_path, :file_name, :file_type, :file_size)";
+                    $attachment_stmt = $pdo->prepare($attachment_sql);
+                    
+                    foreach ($uploaded_files as $file) {
+                        $attachment_stmt->execute([
+                            ':incident_id' => $incident_id,
+                            ':file_path' => $file['file_path'],
+                            ':file_name' => $file['file_name'],
+                            ':file_type' => $file['file_type'],
+                            ':file_size' => $file['file_size']
+                        ]);
+                    }
+                }
             }
             
             $pdo->commit();
@@ -344,18 +400,41 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                 <form action="report.php" method="POST" enctype="multipart/form-data" class="px-6 pb-8 pt-6 sm:px-8 space-y-6"
                       x-data="{ 
-                        fileName: '', 
-                        filePreview: null,
-                        handleFileChange(event) {
-                            const file = event.target.files[0];
-                            this.fileName = file ? file.name : '';
-                            if (file && file.type.startsWith('image/')) {
-                                const reader = new FileReader();
-                                reader.onload = (e) => { this.filePreview = e.target.result; };
-                                reader.readAsDataURL(file);
-                            } else {
-                                this.filePreview = null;
-                            }
+                        filePreviews: [],
+                        selectedFiles: [],
+                        handleMultipleFileChange(event) {
+                            const files = Array.from(event.target.files);
+                            const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+                            
+                            files.forEach(file => {
+                                const preview = {
+                                    name: file.name,
+                                    type: imageTypes.includes(file.type) ? 'image' : 'document',
+                                    url: null
+                                };
+                                
+                                if (preview.type === 'image') {
+                                    const reader = new FileReader();
+                                    reader.onload = (e) => {
+                                        preview.url = e.target.result;
+                                        this.filePreviews.push(preview);
+                                    };
+                                    reader.readAsDataURL(file);
+                                } else {
+                                    this.filePreviews.push(preview);
+                                }
+                            });
+                        },
+                        removeFile(index) {
+                            this.filePreviews.splice(index, 1);
+                            // Reset file input to allow re-selection
+                            const fileInput = this.$refs.fileInput;
+                            const dt = new DataTransfer();
+                            const files = Array.from(fileInput.files);
+                            files.forEach((file, i) => {
+                                if (i !== index) dt.items.add(file);
+                            });
+                            fileInput.files = dt.files;
                         }
                       }">
                     <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
@@ -542,39 +621,54 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     <!-- File Upload -->
                     <div class="space-y-2">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Evidence / Attachment
+                            Evidence / Attachments
                         </label>
                         <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md hover:border-blue-400 dark:hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-700/50">
-                            <div class="space-y-1 text-center">
-                                <template x-if="!filePreview">
+                            <div class="space-y-1 text-center w-full">
+                                <template x-if="filePreviews.length === 0">
                                     <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
                                         <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                                     </svg>
                                 </template>
-                                <template x-if="filePreview">
-                                    <div class="relative inline-block">
-                                        <img :src="filePreview" class="mx-auto h-48 w-auto rounded-lg shadow-sm object-cover">
-                                        <button @click="filePreview = null; fileName = ''; $refs.fileInput.value = ''" type="button" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 focus:outline-none">
-                                            <i class="fas fa-times"></i>
-                                        </button>
+                                
+                                <!-- File Previews Grid -->
+                                <template x-if="filePreviews.length > 0">
+                                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                                        <template x-for="(preview, index) in filePreviews" :key="index">
+                                            <div class="relative group">
+                                                <template x-if="preview.type === 'image'">
+                                                    <img :src="preview.url" class="h-24 w-full object-cover rounded-lg shadow-sm">
+                                                </template>
+                                                <template x-if="preview.type === 'document'">
+                                                    <div class="h-24 w-full bg-gray-200 dark:bg-gray-600 rounded-lg shadow-sm flex flex-col items-center justify-center p-2">
+                                                        <i class="fas fa-file-alt text-3xl text-gray-500 dark:text-gray-300 mb-1"></i>
+                                                        <span class="text-xs text-gray-600 dark:text-gray-300 truncate w-full text-center" x-text="preview.name"></span>
+                                                    </div>
+                                                </template>
+                                                <button @click="removeFile(index)" type="button" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 hover:bg-red-600 focus:outline-none shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <i class="fas fa-times text-xs"></i>
+                                                </button>
+                                            </div>
+                                        </template>
                                     </div>
                                 </template>
-                                <div class="flex text-sm text-gray-600 dark:text-gray-400">
+                                
+                                <div class="flex text-sm text-gray-600 dark:text-gray-400 justify-center">
                                     <label for="evidence" class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 px-2 py-0.5 border border-blue-600/20">
-                                        <span>Upload a file</span>
-                                        <input id="evidence" name="evidence" type="file" class="sr-only" x-ref="fileInput" @change="handleFileChange">
+                                        <span>Upload files</span>
+                                        <input id="evidence" name="evidence[]" type="file" class="sr-only" x-ref="fileInput" @change="handleMultipleFileChange" multiple>
                                     </label>
                                     <p class="pl-1">or drag and drop</p>
                                 </div>
                                 <p class="text-xs text-gray-500 dark:text-gray-400">
-                                    PNG, JPG, GIF, PDF, DOC up to 10MB
+                                    PNG, JPG, GIF, PDF, DOC, TXT up to 10MB each (multiple files allowed)
                                 </p>
-                                <p x-show="fileName" x-text="fileName" class="text-sm font-medium text-blue-600 dark:text-blue-400 transition-all"></p>
+                                <p x-show="filePreviews.length > 0" x-text="`${filePreviews.length} file(s) selected`" class="text-sm font-medium text-blue-600 dark:text-blue-400 transition-all"></p>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Impact, Category, Planned Row -->
+                    <!-- Impact Level, Priority, and Category - Always visible -->
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <!-- Impact Level -->
                         <div>
@@ -590,7 +684,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             </select>
                         </div>
 
-                        <!-- Category -->
+                        <!-- Priority -->
+                        <div>
+                            <label for="priority" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Priority <span class="text-red-500">*</span>
+                            </label>
+                            <select name="priority" id="priority" required
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <option value="Low">Low</option>
+                                <option value="Medium" selected>Medium</option>
+                                <option value="High">High</option>
+                                <option value="Urgent">Urgent</option>
+                            </select>
+                        </div>
+
+                        <!-- Downtime Category -->
                         <div>
                             <label for="downtime_category" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                                 Downtime Category
@@ -604,21 +712,49 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <option value="Other">Other</option>
                             </select>
                         </div>
+                    </div>
 
-                        <!-- Planned -->
-                        <div class="flex items-center mt-8">
-                            <input id="is_planned" name="is_planned" type="checkbox"
-                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                            <label for="is_planned" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                                Is this a planned maintenance?
-                            </label>
+                    <!-- Planned Maintenance Checkbox -->
+                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                        <div class="flex items-start">
+                            <div class="flex items-center h-5">
+                                <input id="is_planned" name="is_planned" type="checkbox"
+                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            </div>
+                            <div class="ml-3">
+                                <label for="is_planned" class="font-medium text-sm text-gray-900 dark:text-white">
+                                    This is planned maintenance
+                                </label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Scheduled maintenance that was communicated in advance. Will NOT affect SLA.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Causes Downtime Checkbox -->
+                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                        <div class="flex items-start">
+                            <div class="flex items-center h-5">
+                                <input id="causes_downtime" name="causes_downtime" type="checkbox" value="1"
+                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            </div>
+                            <div class="ml-3">
+                                <label for="causes_downtime" class="font-medium text-sm text-gray-900 dark:text-white">
+                                    This incident caused service downtime (will affect SLA)
+                                </label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Check this if the incident resulted in actual service unavailability or degradation.
+                                    Leave unchecked for informational incidents (e.g., empty OVA, warnings, capacity alerts).
+                                </p>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Root Cause -->
                     <div>
                         <label for="root_cause" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Root Cause (Optional)
+                            Root Cause
                         </label>
                         <div class="mt-1">
                             <textarea id="root_cause" name="root_cause" rows="3" class="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border border-gray-300 dark:border-gray-600 rounded-md p-3 bg-white dark:bg-gray-700 dark:text-white"><?php echo isset($_POST['root_cause']) ? sanitize($_POST['root_cause']) : ''; ?></textarea>
