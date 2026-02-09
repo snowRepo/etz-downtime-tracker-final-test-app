@@ -106,6 +106,9 @@ CREATE TABLE `incidents` (
   `incident_type_id` int DEFAULT NULL,
   `impact_level` enum('Low','Medium','High','Critical') NOT NULL DEFAULT 'Low',
   `root_cause` text,
+  `root_cause_file` varchar(255) DEFAULT NULL,
+  `lessons_learned` text DEFAULT NULL,
+  `lessons_learned_file` varchar(255) DEFAULT NULL,
   `attachment_path` varchar(255) DEFAULT NULL,
   `status` enum('pending','resolved') NOT NULL DEFAULT 'pending',
   `reported_by` int NOT NULL,
@@ -123,6 +126,21 @@ CREATE TABLE `incidents` (
   CONSTRAINT `fk_incident_service` FOREIGN KEY (`service_id`) REFERENCES `services` (`service_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_incident_type` FOREIGN KEY (`incident_type_id`) REFERENCES `incident_types` (`type_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+DROP TABLE IF EXISTS `incident_attachments`;
+CREATE TABLE `incident_attachments` (
+  `attachment_id` int NOT NULL AUTO_INCREMENT,
+  `incident_id` int NOT NULL,
+  `file_path` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `file_name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `file_type` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `file_size` int DEFAULT NULL,
+  `uploaded_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`attachment_id`),
+  KEY `idx_incident_id` (`incident_id`),
+  CONSTRAINT `fk_attachment_incident` FOREIGN KEY (`incident_id`) REFERENCES `incidents` (`incident_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 DROP TABLE IF EXISTS `service_components`;
