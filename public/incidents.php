@@ -105,17 +105,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         // Add fields for resolved status
         if ($status === 'resolved') {
-<<<<<<< HEAD
-            $sql .= ", resolved_by = :user_id, resolved_at = NOW()";
-            
-            // Add root_cause and lessons_learned if provided
-            if (isset($_POST['root_cause']) && !empty(trim($_POST['root_cause']))) {
-                $sql .= ", root_cause = :root_cause";
-            }
-            if (isset($_POST['lessons_learned']) && !empty(trim($_POST['lessons_learned']))) {
-                $sql .= ", lessons_learned = :lessons_learned";
-            }
-=======
             $sql .= ", resolved_by = :user_id, resolved_at = :resolved_at";
             if (!empty($root_cause)) {
                 $sql .= ", root_cause = :root_cause";
@@ -129,7 +118,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             if (!empty($lessons_learned_file)) {
                 $sql .= ", lessons_learned_file = :lessons_learned_file";
             }
->>>>>>> 665a91f825714d0e1578e8f0b0f2d3b2d6c5fe42
         } else {
             $sql .= ", resolved_by = NULL, resolved_at = NULL";
         }
@@ -144,15 +132,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         if ($status === 'resolved') {
             $params[':user_id'] = $_SESSION['user_id'];
-<<<<<<< HEAD
-            
-            // Add root_cause and lessons_learned to params if provided
-            if (isset($_POST['root_cause']) && !empty(trim($_POST['root_cause']))) {
-                $params[':root_cause'] = trim($_POST['root_cause']);
-            }
-            if (isset($_POST['lessons_learned']) && !empty(trim($_POST['lessons_learned']))) {
-                $params[':lessons_learned'] = trim($_POST['lessons_learned']);
-=======
             $params[':resolved_at'] = $resolved_date;
             if (!empty($root_cause)) {
                 $params[':root_cause'] = $root_cause;
@@ -165,7 +144,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
             if (!empty($lessons_learned_file)) {
                 $params[':lessons_learned_file'] = $lessons_learned_file;
->>>>>>> 665a91f825714d0e1578e8f0b0f2d3b2d6c5fe42
             }
         }
 
@@ -504,27 +482,7 @@ try {
                                                 <?php echo date('M j, Y g:i A', strtotime($incident['created_at'])); ?>
                                             </p>
                                         </div>
-<<<<<<< HEAD
-                                        <p class="mt-1 max-w-2xl text-sm text-gray-500 dark:text-gray-400">
-                                            Reported by <?php echo htmlspecialchars($incident['user_name']); ?> on
-                                            <?php echo date('M j, Y g:i A', strtotime($incident['created_at'])); ?>
-                                        </p>
-                                    </div>
-                                    <?php if ($incident['status'] === 'pending'): ?>
-                                        <button type="button"
-                                            onclick="showResolveModal(<?php echo $incident['incident_id']; ?>, '<?php echo addslashes(htmlspecialchars($incident['service_name'])); ?>', '<?php echo addslashes(htmlspecialchars($incident['root_cause'] ?? '')); ?>')"
-                                            class="mt-2 sm:mt-0 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-                                            <i class="fas fa-check mr-1"></i> Mark as Resolved
-                                        </button>
-                                    <?php else: ?>
-                                        <div class="mt-2 sm:mt-0 flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                                            <span class="text-sm text-green-600 dark:text-green-400 font-medium">
-                                                Resolved by <?php echo htmlspecialchars($incident['resolved_by'] ?? 'System'); ?> on
-                                                <?php echo $incident['resolved_at'] ? date('M j, Y g:i A', strtotime($incident['resolved_at'])) : 'Unknown'; ?>
-                                            </span>
-=======
                                         <?php if ($incident['status'] === 'pending'): ?>
->>>>>>> 665a91f825714d0e1578e8f0b0f2d3b2d6c5fe42
                                             <button type="button"
                                                 onclick="showResolveModal(<?php echo $incident['incident_id']; ?>, '<?php echo addslashes(htmlspecialchars($incident['service_name'])); ?>', '<?php echo addslashes(htmlspecialchars($incident['root_cause'] ?? '')); ?>')"
                                                 class="mt-2 sm:mt-0 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
@@ -984,68 +942,6 @@ try {
                         </div>
                     </form>
                 </div>
-<<<<<<< HEAD
-            <?php endif; ?>
-        </div>
-    </main>
-
-    <!-- Resolve Issue Modal -->
-    <div id="resolveModal"
-        class="hidden fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50 p-4 transition-opacity duration-300">
-        <div class="bg-white rounded-lg shadow-xl max-w-md w-full transform transition-all duration-300 scale-95 opacity-0"
-            id="modalContent">
-            <div class="p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-1">Resolve Issue</h3>
-                <p class="text-sm text-gray-500 mb-4" id="modalServiceName"></p>
-
-                <form id="resolveForm" method="POST" class="space-y-4">
-                    <input type="hidden" name="action" value="update_status">
-                    <input type="hidden" name="incident_id" id="modal_incident_id" value="">
-                    <input type="hidden" name="status" value="resolved">
-
-                    <div>
-                        <label for="resolve_name" class="block text-sm font-medium text-gray-700">Your Name</label>
-                        <input type="text" id="resolve_name" name="user_name"
-                            value="<?= htmlspecialchars($_SESSION['full_name']) ?>"
-                            class="mt-1 block w-full border border-gray-300 bg-gray-100 text-gray-500 rounded-md shadow-sm py-2 px-3 cursor-not-allowed sm:text-sm"
-                            readonly autocomplete="off">
-                    </div>
-
-                    <!-- Root Cause -->
-                    <div>
-                        <label for="resolve_root_cause" class="block text-sm font-medium text-gray-700">
-                            Root Cause <span class="text-gray-400">(Optional)</span>
-                        </label>
-                        <textarea id="resolve_root_cause" name="root_cause" rows="3"
-                            placeholder="Describe what caused this incident..."
-                            class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
-                        <p class="mt-1 text-xs text-gray-500">Update or add the root cause if it wasn't specified earlier</p>
-                    </div>
-
-                    <!-- Lessons Learned -->
-                    <div>
-                        <label for="resolve_lessons_learned" class="block text-sm font-medium text-gray-700">
-                            Lessons Learned <span class="text-red-500">*</span>
-                        </label>
-                        <textarea id="resolve_lessons_learned" name="lessons_learned" rows="4" required
-                            placeholder="What did we learn from this incident? How can we prevent it in the future?"
-                            class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
-                        <p class="mt-1 text-xs text-gray-500">Document key insights and preventive measures</p>
-                    </div>
-
-                    <div class="flex justify-end space-x-3 pt-2">
-                        <button type="button" onclick="hideResolveModal()"
-                            class="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                            Cancel
-                        </button>
-                        <button type="submit"
-                            class="inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
-                            <i class="fas fa-check mr-2"></i> Mark as Resolved
-                        </button>
-                    </div>
-                </form>
-=======
->>>>>>> 665a91f825714d0e1578e8f0b0f2d3b2d6c5fe42
             </div>
         </div>
 
@@ -1228,50 +1124,6 @@ try {
                 }, 10);
             }
 
-<<<<<<< HEAD
-        // Resolve Modal Functions
-        function showResolveModal(incidentId, serviceName, rootCause = '') {
-            const modal = document.getElementById('resolveModal');
-            const modalContent = document.getElementById('modalContent');
-
-            // Set the incident ID and service name
-            document.getElementById('modal_incident_id').value = incidentId;
-            document.getElementById('modalServiceName').textContent = `Service: ${serviceName}`;
-            
-            // Pre-populate root cause if it exists
-            document.getElementById('resolve_root_cause').value = rootCause;
-
-            // Show modal with animation
-            modal.classList.remove('hidden');
-            setTimeout(() => {
-                modalContent.classList.remove('opacity-0', 'scale-95');
-                modalContent.classList.add('opacity-100', 'scale-100');
-                // Focus on lessons learned field since that's required
-                document.getElementById('resolve_lessons_learned').focus();
-            }, 10);
-        }
-
-        function hideResolveModal() {
-            const modal = document.getElementById('resolveModal');
-            const modalContent = document.getElementById('modalContent');
-
-            // Hide with animation
-            modalContent.classList.remove('opacity-100', 'scale-100');
-            modalContent.classList.add('opacity-0', 'scale-95');
-
-            // Hide modal after animation
-            setTimeout(() => {
-                modal.classList.add('hidden');
-                // Reset form
-                document.getElementById('resolveForm').reset();
-            }, 200);
-        }
-
-        // Close modal when clicking outside
-        document.getElementById('resolveModal').addEventListener('click', function (e) {
-            if (e.target === this) {
-                hideResolveModal();
-=======
             function hideResolveModal() {
                 const modal = document.getElementById('resolveModal');
                 const modalContent = document.getElementById('modalContent');
@@ -1286,7 +1138,6 @@ try {
                     // Reset form
                     document.getElementById('resolveForm').reset();
                 }, 200);
->>>>>>> 665a91f825714d0e1578e8f0b0f2d3b2d6c5fe42
             }
 
             // Close modal when clicking outside
