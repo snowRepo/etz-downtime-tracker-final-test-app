@@ -100,6 +100,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             exit;
         }
 
+        // Get current incident status to detect if it's being reopened
+        $currentStatusStmt = $pdo->prepare("SELECT status FROM incidents WHERE incident_id = :incident_id");
+        $currentStatusStmt->execute([':incident_id' => $incidentId]);
+        $currentStatus = $currentStatusStmt->fetchColumn();
+
         // Prepare the SQL based on status
         $sql = "UPDATE incidents SET status = :status";
 
@@ -149,9 +154,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         $stmt->execute($params);
 
-        // Add system update
-        $statusText = $status === 'resolved' ? 'resolved' : 'reopened';
-        $updateText = "Incident has been marked as {$statusText} by " . $userName;
+        // Add system update with appropriate message
+        // Detect if incident is being reopened (changing from resolved to pending)
+        $isReopening = ($currentStatus === 'resolved' && $status === 'pending');
+
+        if ($status === 'resolved') {
+            $updateText = "Incident has been marked as resolved by " . $userName;
+        } elseif ($isReopening) {
+            $updateText = "Incident was reopened by " . $userName;
+        } else {
+            $updateText = "Incident status updated to pending by " . $userName;
+        }
 
         $stmt = $pdo->prepare("
             INSERT INTO incident_updates (incident_id, user_id, user_name, update_text) 

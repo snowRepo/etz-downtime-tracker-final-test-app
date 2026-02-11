@@ -34,7 +34,7 @@ INSERT INTO incident_templates (template_name, service_id, component_id, impact_
     'high',
     'Users are experiencing login failures and transaction errors due to database connection timeouts. The application cannot establish connections to the primary database server. This is affecting all services that rely on the database.',
     'Connection pool exhausted - maximum connections reached during peak load',
-    1
+    (SELECT user_id FROM users WHERE username = 'admin' LIMIT 1)
 ),
 (
     'API Gateway Service Down',
@@ -43,7 +43,7 @@ INSERT INTO incident_templates (template_name, service_id, component_id, impact_
     'critical',
     'API requests are failing with 503 Service Unavailable errors. All services dependent on the API gateway are affected. Users cannot access any features that require API calls.',
     'API Gateway service crashed due to Out of Memory (OOM) error',
-    1
+    (SELECT user_id FROM users WHERE username = 'admin' LIMIT 1)
 ),
 (
     'Scheduled System Maintenance',
@@ -52,7 +52,7 @@ INSERT INTO incident_templates (template_name, service_id, component_id, impact_
     'low',
     'Scheduled maintenance window for system updates and patches. Services may experience brief interruptions during deployment. Users have been notified in advance.',
     'Planned maintenance activity - no incident, informational only',
-    1
+    (SELECT user_id FROM users WHERE username = 'admin' LIMIT 1)
 ),
 (
     'Network Connectivity Issue',
@@ -61,7 +61,7 @@ INSERT INTO incident_templates (template_name, service_id, component_id, impact_
     'high',
     'Users are experiencing intermittent connectivity issues and slow response times. Network latency has increased significantly. This is affecting multiple services across the infrastructure.',
     'Network switch configuration issue after recent update',
-    1
+    (SELECT user_id FROM users WHERE username = 'admin' LIMIT 1)
 ),
 (
     'Authentication Service Failure',
@@ -70,5 +70,5 @@ INSERT INTO incident_templates (template_name, service_id, component_id, impact_
     'critical',
     'Users are unable to log in to any services. Authentication requests are timing out. This is a complete authentication system outage affecting all users.',
     'LDAP server connection failure - primary authentication server unreachable',
-    1
+    (SELECT user_id FROM users WHERE username = 'admin' LIMIT 1)
 );

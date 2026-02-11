@@ -139,10 +139,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
         unset($incident);
 
         // Calculate uptime percentage
-        // Logic: 100% - (Downtime / Total Period * 100)
+        // Logic: SLA Target - (Downtime / Total Period * 100)
+        // Capped at SLA target since we're measuring SLA compliance, not raw uptime
         $uptimePercentage = $totalMinutes > 0
-            ? max(0, 100 - (($totalDowntime / $totalMinutes) * 100))
-            : 100;
+            ? max(0, min($slaTarget, 100 - (($totalDowntime / $totalMinutes) * 100)))
+            : $slaTarget;
 
         $isMetSla = $uptimePercentage >= $slaTarget;
 
@@ -512,11 +513,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
                                                 <div class="text-2xl font-semibold text-gray-900 dark:text-white">
                                                     <?= number_format($reportData['uptimePercentage'], 2) ?>%
                                                 </div>
-                                                <?php if ($reportData['isMetSla']): ?>
-                                                    <div class="ml-2 flex items-baseline text-sm font-semibold text-green-600">
-                                                        ✓ Met
-                                                    </div>
-                                                <?php endif; ?>
                                             </dd>
                                         </dl>
                                     </div>
