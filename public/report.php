@@ -82,6 +82,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $component_id = $_POST['component_id'] === 'all' ? 'all' : (filter_var($_POST['component_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
     $incident_type_id = $_POST['incident_type_id'] === 'all' ? 'all' : (filter_var($_POST['incident_type_id'] ?? null, FILTER_VALIDATE_INT) ?: null);
     $impact_level = in_array($_POST['impact_level'] ?? '', ['Low', 'Medium', 'High', 'Critical']) ? $_POST['impact_level'] : 'Low';
+    $description = trim(filter_var($_POST['description'] ?? '', FILTER_SANITIZE_STRING));
     $root_cause = trim(filter_var($_POST['root_cause'] ?? '', FILTER_SANITIZE_STRING));
     
     // Handle incident date and time
@@ -209,8 +210,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                 // 1. Insert into incidents table
                 $sql = "INSERT INTO incidents 
-                        (service_id, component_id, incident_type_id, impact_level, priority, root_cause, attachment_path, actual_start_time, status, reported_by) 
-                        VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :priority, :root_cause, :attachment_path, :actual_start_time, :status, :reported_by)";
+                        (service_id, component_id, incident_type_id, impact_level, priority, description, root_cause, attachment_path, actual_start_time, status, reported_by) 
+                        VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :priority, :description, :root_cause, :attachment_path, :actual_start_time, :status, :reported_by)";
                 
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute([
@@ -219,6 +220,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     ':incident_type_id' => $t_id,
                     ':impact_level' => $impact_level,
                     ':priority' => $priority,
+                    ':description' => $description,
                     ':root_cause' => $root_cause,
                     ':attachment_path' => $attachment_path,
                     ':actual_start_time' => $actual_start_time,
@@ -472,11 +474,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <!-- Template Selector -->
                         <div id="templateSelectorContainer" style="display:none;">
                             <label for="template_select" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                <i class="fas fa-magic mr-2 text-purple-500"></i>Use a Template
+                                Use a Template
                                 <span class="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(Optional - Quick Fill)</span>
                             </label>
                             <select id="template_select"
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-purple-500 focus:border-purple-500">
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
                                 <option value="">Choose a template to auto-fill...</option>
                             </select>
                             <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400 flex items-start">
@@ -666,6 +668,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <p x-show="filePreviews.length > 0" x-text="`${filePreviews.length} file(s) selected`" class="text-sm font-medium text-blue-600 dark:text-blue-400 transition-all"></p>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Incident Description (Optional) -->
+                    <div>
+                        <label for="description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Incident Description
+                           <!-- <span class="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(Optional)</span> -->
+                        </label>
+                        <textarea name="description" id="description" rows="4"
+                            placeholder="Describe what happened during this incident in detail..."
+                            class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500"><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
+                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            Provide a detailed explanation of what occurred. This is separate from the root cause.
+                        </p>
                     </div>
 
                     <!-- Impact Level, Priority, and Category - Always visible -->
@@ -1009,11 +1026,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     if (template.impact_level) {
                         const impactDropdown = document.getElementById('impact_level');
                         if (impactDropdown) {
-                            impactDropdown.value = template.impact_level;
+                            // Capitalize first letter to match form values (Low, Medium, High, Critical)
+                            const capitalizedImpact = template.impact_level.charAt(0).toUpperCase() + template.impact_level.slice(1).toLowerCase();
+                            impactDropdown.value = capitalizedImpact;
                         }
                     }
                     
-                    // Pre-fill description
+                    // Pre-fill description if specified
                     if (template.description) {
                         const descTextarea = document.getElementById('description');
                         if (descTextarea) {
