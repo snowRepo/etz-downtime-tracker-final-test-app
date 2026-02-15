@@ -178,6 +178,213 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         ]);
 
         $_SESSION['success'] = "Incident updated successfully!";
+    } elseif ($_POST['action'] === 'edit_incident' && isset($_POST['incident_id'])) {
+        // Handle incident editing
+        $incidentId = intval($_POST['incident_id']);
+        $serviceId = intval($_POST['service_id']);
+        $componentId = !empty($_POST['component_id']) ? intval($_POST['component_id']) : null;
+        $incidentTypeId = !empty($_POST['incident_type_id']) ? intval($_POST['incident_type_id']) : null;
+        $impactLevel = $_POST['impact_level'];
+        $priority = $_POST['priority'];
+        $actualStartTime = $_POST['actual_start_time'];
+        $description = !empty($_POST['description']) ? trim($_POST['description']) : null;
+        $companies = isset($_POST['companies']) ? $_POST['companies'] : [];
+
+        // Validate required fields
+        if (empty($companies)) {
+            $_SESSION['error'] = "Please select at least one affected company.";
+        } else {
+            try {
+                $pdo->beginTransaction();
+
+                // Update incident
+                $stmt = $pdo->prepare("
+                    UPDATE incidents 
+                    SET service_id = :service_id,
+                        component_id = :component_id,
+                        incident_type_id = :incident_type_id,
+                        impact_level = :impact_level,
+                        priority = :priority,
+                        actual_start_time = :actual_start_time,
+                        description = :description,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE incident_id = :incident_id
+                ");
+                $stmt->execute([
+                    ':service_id' => $serviceId,
+                    ':component_id' => $componentId,
+                    ':incident_type_id' => $incidentTypeId,
+                    ':impact_level' => $impactLevel,
+                    ':priority' => $priority,
+                    ':actual_start_time' => $actualStartTime,
+                    ':description' => $description,
+                    ':incident_id' => $incidentId
+                ]);
+
+                // Update affected companies with audit trail
+                // First, get existing companies to track changes
+                $existingStmt = $pdo->prepare("SELECT company_id FROM incident_affected_companies WHERE incident_id = :incident_id");
+                $existingStmt->execute([':incident_id' => $incidentId]);
+                $existingCompanies = $existingStmt->fetchAll(PDO::FETCH_COLUMN);
+
+                // Convert new companies to integers for comparison
+                $newCompanies = array_map('intval', $companies);
+
+                // Determine which companies were added and removed
+                $addedCompanies = array_diff($newCompanies, $existingCompanies);
+                $removedCompanies = array_diff($existingCompanies, $newCompanies);
+
+                // Log removed companies to history
+                if (!empty($removedCompanies)) {
+                    $historyStmt = $pdo->prepare("
+                        INSERT INTO incident_company_history (incident_id, company_id, action, changed_by) 
+                        VALUES (:incident_id, :company_id, 'removed', :changed_by)
+                    ");
+                    foreach ($removedCompanies as $companyId) {
+                        $historyStmt->execute([
+                            ':incident_id' => $incidentId,
+                            ':company_id' => $companyId,
+                            ':changed_by' => $_SESSION['user_id']
+                        ]);
+                    }
+                }
+
+                // Log added companies to history
+                if (!empty($addedCompanies)) {
+                    $historyStmt = $pdo->prepare("
+                        INSERT INTO incident_company_history (incident_id, company_id, action, changed_by) 
+                        VALUES (:incident_id, :company_id, 'added', :changed_by)
+                    ");
+                    foreach ($addedCompanies as $companyId) {
+                        $historyStmt->execute([
+                            ':incident_id' => $incidentId,
+                            ':company_id' => $companyId,
+                            ':changed_by' => $_SESSION['user_id']
+                        ]);
+                    }
+                }
+
+                // Delete existing companies
+                $deleteStmt = $pdo->prepare("DELETE FROM incident_affected_companies WHERE incident_id = :incident_id");
+                $deleteStmt->execute([':incident_id' => $incidentId]);
+
+                // Insert new companies
+                $insertStmt = $pdo->prepare("
+                    INSERT INTO incident_affected_companies (incident_id, company_id) 
+                    VALUES (:incident_id, :company_id)
+                ");
+                foreach ($newCompanies as $companyId) {
+                    $insertStmt->execute([
+                        ':incident_id' => $incidentId,
+                        ':company_id' => $companyId
+                    ]);
+                }
+
+                // Handle attachment deletions
+                if (!empty($_POST['delete_attachments']) && !empty($_POST['delete_attachment_paths'])) {
+                    $deleteAttachmentIds = $_POST['delete_attachments'];
+                    $deleteAttachmentPaths = $_POST['delete_attachment_paths'];
+
+                    foreach ($deleteAttachmentIds as $index => $attachmentId) {
+                        $attachmentId = intval($attachmentId);
+                        $filePath = $deleteAttachmentPaths[$index];
+
+                        // Delete from database
+                        $deleteAttStmt = $pdo->prepare("DELETE FROM incident_attachments WHERE attachment_id = :attachment_id AND incident_id = :incident_id");
+                        $deleteAttStmt->execute([
+                            ':attachment_id' => $attachmentId,
+                            ':incident_id' => $incidentId
+                        ]);
+
+                        // Delete file from server
+                        $fullPath = __DIR__ . '/../' . $filePath;
+                        if (file_exists($fullPath)) {
+                            unlink($fullPath);
+                        }
+                    }
+                }
+
+                // Handle new file uploads
+                if (!empty($_FILES['new_attachments']['name'][0])) {
+                    $uploadDir = __DIR__ . '/../uploads/incidents/';
+                    $allowedTypes = [
+                        'image/jpeg',
+                        'image/jpg',
+                        'image/png',
+                        'image/gif',
+                        'application/pdf',
+                        'application/msword',
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'text/plain'
+                    ];
+                    $maxFileSize = 10 * 1024 * 1024; // 10MB
+
+                    foreach ($_FILES['new_attachments']['name'] as $key => $fileName) {
+                        if ($_FILES['new_attachments']['error'][$key] === UPLOAD_ERR_OK) {
+                            $fileTmpPath = $_FILES['new_attachments']['tmp_name'][$key];
+                            $fileType = $_FILES['new_attachments']['type'][$key];
+                            $fileSize = $_FILES['new_attachments']['size'][$key];
+
+                            // Get custom name if provided
+                            $customName = isset($_POST['new_file_custom_names'][$key]) && !empty($_POST['new_file_custom_names'][$key])
+                                ? $_POST['new_file_custom_names'][$key]
+                                : $fileName;
+
+                            // Validate file type
+                            if (!in_array($fileType, $allowedTypes)) {
+                                continue; // Skip invalid files
+                            }
+
+                            // Validate file size
+                            if ($fileSize > $maxFileSize) {
+                                continue; // Skip files that are too large
+                            }
+
+                            // Generate unique filename
+                            $fileExtension = pathinfo($fileName, PATHINFO_EXTENSION);
+                            $newFileName = md5(uniqid() . $fileName . time()) . '.' . $fileExtension;
+                            $destPath = $uploadDir . $newFileName;
+
+                            // Move uploaded file
+                            if (move_uploaded_file($fileTmpPath, $destPath)) {
+                                // Insert into database
+                                $insertAttStmt = $pdo->prepare("
+                                    INSERT INTO incident_attachments (incident_id, file_path, file_name, file_type, file_size)
+                                    VALUES (:incident_id, :file_path, :file_name, :file_type, :file_size)
+                                ");
+                                $insertAttStmt->execute([
+                                    ':incident_id' => $incidentId,
+                                    ':file_path' => 'uploads/incidents/' . $newFileName,
+                                    ':file_name' => $customName,
+                                    ':file_type' => $fileType,
+                                    ':file_size' => $fileSize
+                                ]);
+                            }
+                        }
+                    }
+                }
+
+                // Add system update log
+                $updateText = "Incident details updated by " . $_SESSION['full_name'];
+                $logStmt = $pdo->prepare("
+                    INSERT INTO incident_updates (incident_id, user_id, user_name, update_text) 
+                    VALUES (:incident_id, :user_id, :user_name, :update_text)
+                ");
+                $logStmt->execute([
+                    ':incident_id' => $incidentId,
+                    ':user_id' => $_SESSION['user_id'],
+                    ':user_name' => 'System',
+                    ':update_text' => $updateText
+                ]);
+
+                $pdo->commit();
+                $_SESSION['success'] = "Incident details updated successfully!";
+
+            } catch (PDOException $e) {
+                $pdo->rollBack();
+                $_SESSION['error'] = "Failed to update incident: " . $e->getMessage();
+            }
+        }
     }
 
     // Redirect to prevent form resubmission
@@ -218,7 +425,11 @@ try {
             s.service_name,
             sc.name as component_name,
             it.name as incident_type_name,
-            GROUP_CONCAT(DISTINCT c.company_name ORDER BY c.company_name SEPARATOR ', ') as affected_companies,
+            CASE 
+                WHEN GROUP_CONCAT(DISTINCT c.company_name ORDER BY c.company_name SEPARATOR ', ') LIKE '%All%' 
+                THEN 'All'
+                ELSE GROUP_CONCAT(DISTINCT c.company_name ORDER BY c.company_name SEPARATOR ', ')
+            END as affected_companies,
             COUNT(DISTINCT c.company_id) as company_count,
             (SELECT COUNT(*) FROM incident_updates iu WHERE iu.incident_id = i.incident_id) as update_count,
             (SELECT COUNT(*) FROM incident_attachments ia WHERE ia.incident_id = i.incident_id) as attachment_count
@@ -250,6 +461,12 @@ try {
         $incident['updates'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     unset($incident); // Break the reference
+
+    // Fetch data for edit modal dropdowns
+    $services = $pdo->query("SELECT service_id, service_name FROM services ORDER BY service_name")->fetchAll();
+    $components = $pdo->query("SELECT component_id, name, service_id FROM service_components ORDER BY name")->fetchAll();
+    $incidentTypes = $pdo->query("SELECT type_id, name FROM incident_types ORDER BY name")->fetchAll();
+    $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER BY company_name")->fetchAll();
 
 } catch (PDOException $e) {
     die("ERROR: Could not fetch incidents. " . $e->getMessage());
@@ -522,9 +739,19 @@ try {
                                         <!-- LEFT COLUMN: Details -->
                                         <div class="space-y-4">
                                             <div>
-                                                <h4
-                                                    class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                                                    Component Affected</h4>
+                                                <div class="flex items-center justify-between mb-1">
+                                                    <h4
+                                                        class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                                                        Component Affected
+                                                    </h4>
+                                                    <?php if ($incident['status'] === 'pending'): ?>
+                                                        <button type="button"
+                                                            onclick="showEditModal(<?php echo $incident['incident_id']; ?>)"
+                                                            class="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 focus:outline-none">
+                                                            <i class="fas fa-edit mr-1"></i> Edit Details
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </div>
                                                 <p class="mt-1 text-sm text-gray-900 dark:text-white font-medium">
                                                     <?php echo htmlspecialchars($incident['component_name'] ?? 'All'); ?>
                                                 </p>
@@ -551,6 +778,21 @@ try {
                                             <div>
                                                 <h4
                                                     class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                                                    Description</h4>
+                                                <?php if (!empty($incident['description'])): ?>
+                                                    <p class="mt-1 text-sm text-gray-900 dark:text-white">
+                                                        <?php echo nl2br(htmlspecialchars($incident['description'])); ?>
+                                                    </p>
+                                                <?php else: ?>
+                                                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400 italic">No description
+                                                        provided
+                                                    </p>
+                                                <?php endif; ?>
+                                            </div>
+
+                                            <div>
+                                                <h4
+                                                    class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                                                     Root Cause</h4>
                                                 <?php if (!empty($incident['root_cause'])): ?>
                                                     <p class="mt-1 text-sm text-gray-900 dark:text-white">
@@ -562,10 +804,22 @@ try {
                                                 <?php endif; ?>
                                             </div>
 
+                                            <!-- Lessons Learned (only show for resolved incidents) -->
+                                            <?php if ($incident['status'] === 'resolved' && !empty($incident['lessons_learned'])): ?>
+                                                <div>
+                                                    <h4
+                                                        class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                                                        Lessons Learned</h4>
+                                                    <p class="mt-1 text-sm text-gray-900 dark:text-white">
+                                                        <?php echo nl2br(htmlspecialchars($incident['lessons_learned'])); ?>
+                                                    </p>
+                                                </div>
+                                            <?php endif; ?>
+
                                             <?php
                                             // Fetch all attachments for this incident
                                             $attachmentsQuery = $pdo->prepare("
-                                                SELECT file_path, uploaded_at 
+                                                SELECT file_path, file_name, uploaded_at 
                                                 FROM incident_attachments 
                                                 WHERE incident_id = :incident_id 
                                                 ORDER BY uploaded_at ASC
@@ -573,31 +827,50 @@ try {
                                             $attachmentsQuery->execute([':incident_id' => $incident['incident_id']]);
                                             $attachments = $attachmentsQuery->fetchAll();
 
-                                            // Check if there are any attachments (either from old attachment_path or new incident_attachments table)
-                                            $hasAttachments = !empty($incident['attachment_path']) || !empty($attachments);
+                                            // Build attachments array - prioritize incident_attachments table
+                                            $allAttachments = [];
+
+                                            // First, add all attachments from incident_attachments table (has proper file_name)
+                                            foreach ($attachments as $attachment) {
+                                                $allAttachments[] = [
+                                                    'file_path' => $attachment['file_path'],
+                                                    'file_name' => $attachment['file_name']
+                                                ];
+                                            }
+
+                                            // Then, add legacy attachment_path only if it's not already in the list
+                                            if (!empty($incident['attachment_path'])) {
+                                                $exists = false;
+                                                foreach ($allAttachments as $existing) {
+                                                    if ($existing['file_path'] === $incident['attachment_path']) {
+                                                        $exists = true;
+                                                        break;
+                                                    }
+                                                }
+                                                if (!$exists) {
+                                                    // For legacy attachment_path, extract filename from path
+                                                    $allAttachments[] = [
+                                                        'file_path' => $incident['attachment_path'],
+                                                        'file_name' => basename($incident['attachment_path'])
+                                                    ];
+                                                }
+                                            }
                                             ?>
 
-                                            <?php if ($hasAttachments): ?>
+                                            <?php if (!empty($allAttachments)): ?>
                                                 <div>
                                                     <h4
                                                         class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                                                        <?php echo (count($attachments) > 1 || (!empty($incident['attachment_path']) && !empty($attachments))) ? 'Attachments' : 'Attachment'; ?>
+                                                        <?php echo count($allAttachments) > 1 ? 'Attachments' : 'Attachment'; ?>
                                                     </h4>
                                                     <div class="mt-2 flex flex-wrap gap-2">
-                                                        <?php if (!empty($incident['attachment_path'])): ?>
-                                                            <a href="<?= url($incident['attachment_path']) ?>" target="_blank"
-                                                                class="inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                                                                <i class="fas fa-paperclip mr-2"></i> View Evidence
-                                                            </a>
-                                                        <?php endif; ?>
-
-                                                        <?php foreach ($attachments as $attachment): ?>
+                                                        <?php foreach ($allAttachments as $attachment): ?>
                                                             <a href="<?= url($attachment['file_path']) ?>" target="_blank"
                                                                 class="inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
                                                                 <i class="fas fa-file mr-2"></i>
                                                                 <?php
-                                                                $fileName = basename($attachment['file_path']);
-                                                                echo htmlspecialchars(strlen($fileName) > 30 ? substr($fileName, 0, 27) . '...' : $fileName);
+                                                                $displayName = $attachment['file_name'];
+                                                                echo htmlspecialchars(strlen($displayName) > 30 ? substr($displayName, 0, 27) . '...' : $displayName);
                                                                 ?>
                                                             </a>
                                                         <?php endforeach; ?>
@@ -849,14 +1122,7 @@ try {
                     <h3 class="text-lg font-medium text-gray-900 mb-1">Resolve Issue</h3>
                     <p class="text-sm text-gray-500 mb-4" id="modalServiceName"></p>
 
-                    <form id="resolveForm" method="POST" enctype="multipart/form-data" class="space-y-4" x-data="{
-                              rootCauseMode: 'text',
-                              lessonsMode: 'text',
-                              rootCauseFileName: '',
-                              lessonsFileName: '',
-                              showRootCause: false,
-                              currentRootCause: ''
-                          }">
+                    <form id="resolveForm" method="POST" class="space-y-4">
                         <input type="hidden" name="action" value="update_status">
                         <input type="hidden" name="incident_id" id="modal_incident_id" value="">
                         <input type="hidden" name="status" value="resolved">
@@ -869,68 +1135,24 @@ try {
                                 readonly autocomplete="off">
                         </div>
 
-                        <!-- Root Cause (Conditional) -->
-                        <div x-show="showRootCause" x-cloak>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <!-- Root Cause -->
+                        <div>
+                            <label for="root_cause_textarea" class="block text-sm font-medium text-gray-700 mb-2">
                                 Root Cause <span class="text-red-500">*</span>
                             </label>
-                            <div class="flex space-x-2 mb-2">
-                                <button type="button" @click="rootCauseMode = 'text'"
-                                    :class="rootCauseMode === 'text' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'"
-                                    class="px-3 py-1 rounded text-sm">
-                                    <i class="fas fa-keyboard mr-1"></i> Text
-                                </button>
-                                <button type="button" @click="rootCauseMode = 'file'"
-                                    :class="rootCauseMode === 'file' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'"
-                                    class="px-3 py-1 rounded text-sm">
-                                    <i class="fas fa-file-upload mr-1"></i> File
-                                </button>
-                            </div>
-                            <div x-show="rootCauseMode === 'text'">
-                                <textarea name="root_cause" rows="3"
-                                    class="block w-full border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
-                                    placeholder="Describe the root cause of this incident..."></textarea>
-                            </div>
-                            <div x-show="rootCauseMode === 'file'">
-                                <input type="file" name="root_cause_file" accept=".pdf,.doc,.docx,.txt"
-                                    @change="rootCauseFileName = $event.target.files[0]?.name || ''"
-                                    class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                                <p x-show="rootCauseFileName" x-text="'Selected: ' + rootCauseFileName"
-                                    class="text-xs text-gray-600 mt-1"></p>
-                                <p class="text-xs text-gray-500 mt-1">PDF, DOC, DOCX, TXT (max 10MB)</p>
-                            </div>
+                            <textarea name="root_cause" id="root_cause_textarea" rows="3" required
+                                class="block w-full border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Describe the root cause of this incident..."></textarea>
                         </div>
 
                         <!-- Lessons Learned -->
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                            <label for="lessons_learned" class="block text-sm font-medium text-gray-700 mb-2">
                                 Lessons Learned <span class="text-red-500">*</span>
                             </label>
-                            <div class="flex space-x-2 mb-2">
-                                <button type="button" @click="lessonsMode = 'text'"
-                                    :class="lessonsMode === 'text' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'"
-                                    class="px-3 py-1 rounded text-sm">
-                                    <i class="fas fa-keyboard mr-1"></i> Text
-                                </button>
-                                <button type="button" @click="lessonsMode = 'file'"
-                                    :class="lessonsMode === 'file' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'"
-                                    class="px-3 py-1 rounded text-sm">
-                                    <i class="fas fa-file-upload mr-1"></i> File
-                                </button>
-                            </div>
-                            <div x-show="lessonsMode === 'text'">
-                                <textarea name="lessons_learned" rows="4"
-                                    class="block w-full border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
-                                    placeholder="What did we learn from this incident? How can we prevent it in the future?"></textarea>
-                            </div>
-                            <div x-show="lessonsMode === 'file'">
-                                <input type="file" name="lessons_learned_file" accept=".pdf,.doc,.docx,.txt"
-                                    @change="lessonsFileName = $event.target.files[0]?.name || ''"
-                                    class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                                <p x-show="lessonsFileName" x-text="'Selected: ' + lessonsFileName"
-                                    class="text-xs text-gray-600 mt-1"></p>
-                                <p class="text-xs text-gray-500 mt-1">PDF, DOC, DOCX, TXT (max 10MB)</p>
-                            </div>
+                            <textarea name="lessons_learned" id="lessons_learned" rows="4" required
+                                class="block w-full border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="What did we learn from this incident? How can we prevent it in the future?"></textarea>
                         </div>
 
                         <!-- Resolution Date -->
@@ -997,6 +1219,315 @@ try {
                             <button type="submit"
                                 class="inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">
                                 <i class="fas fa-redo mr-2"></i> Reopen Incident
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Incident Modal -->
+        <div id="editModal"
+            class="hidden fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50 p-4 transition-opacity duration-300">
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full transform transition-all duration-300 scale-95 opacity-0 max-h-[90vh] overflow-y-auto"
+                id="editModalContent">
+                <div class="p-6">
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-1">Edit Incident Details</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-4" id="editModalIncidentInfo"></p>
+
+                    <form id="editForm" method="POST" enctype="multipart/form-data" class="space-y-4" x-data="{
+                        existingAttachments: [],
+                        attachmentsToDelete: [],
+                        newFilePreviews: [],
+                        markForDeletion(attachmentId, filePath) {
+                            this.attachmentsToDelete.push({ id: attachmentId, path: filePath });
+                            // Find and mark the attachment visually
+                            const attachment = this.existingAttachments.find(a => a.attachment_id === attachmentId);
+                            if (attachment) attachment.markedForDeletion = true;
+                        },
+                        unmarkForDeletion(attachmentId) {
+                            this.attachmentsToDelete = this.attachmentsToDelete.filter(a => a.id !== attachmentId);
+                            const attachment = this.existingAttachments.find(a => a.attachment_id === attachmentId);
+                            if (attachment) attachment.markedForDeletion = false;
+                        },
+                        handleNewFiles(event) {
+                            const files = Array.from(event.target.files);
+                            const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+                            
+                            files.forEach(file => {
+                                const preview = {
+                                    name: file.name,
+                                    customName: file.name,
+                                    type: imageTypes.includes(file.type) ? 'image' : 'document',
+                                    url: null
+                                };
+                                
+                                if (preview.type === 'image') {
+                                    const reader = new FileReader();
+                                    reader.onload = (e) => {
+                                        preview.url = e.target.result;
+                                        this.newFilePreviews.push(preview);
+                                    };
+                                    reader.readAsDataURL(file);
+                                } else {
+                                    this.newFilePreviews.push(preview);
+                                }
+                            });
+                        },
+                        removeNewFile(index) {
+                            this.newFilePreviews.splice(index, 1);
+                            const fileInput = this.$refs.newFileInput;
+                            const dt = new DataTransfer();
+                            const files = Array.from(fileInput.files);
+                            files.forEach((file, i) => {
+                                if (i !== index) dt.items.add(file);
+                            });
+                            fileInput.files = dt.files;
+                        }
+                    }">
+                        <input type="hidden" name="action" value="edit_incident">
+                        <input type="hidden" name="incident_id" id="edit_incident_id" value="">
+                        <!-- Hidden inputs for attachments to delete -->
+                        <template x-for="attachment in attachmentsToDelete" :key="attachment.id">
+                            <input type="hidden" name="delete_attachments[]" :value="attachment.id">
+                        </template>
+                        <template x-for="attachment in attachmentsToDelete" :key="attachment.path">
+                            <input type="hidden" name="delete_attachment_paths[]" :value="attachment.path">
+                        </template>
+
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <!-- Service -->
+                            <div>
+                                <label for="edit_service"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Service <span class="text-red-500">*</span>
+                                </label>
+                                <select id="edit_service" name="service_id" required
+                                    class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
+                                    <?php foreach ($services as $service): ?>
+                                        <option value="<?= $service['service_id'] ?>">
+                                            <?= htmlspecialchars($service['service_name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <!-- Component -->
+                            <div>
+                                <label for="edit_component"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Component
+                                </label>
+                                <select id="edit_component" name="component_id"
+                                    class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">All</option>
+                                    <?php foreach ($components as $component): ?>
+                                        <option value="<?= $component['component_id'] ?>"
+                                            data-service="<?= $component['service_id'] ?>">
+                                            <?= htmlspecialchars($component['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <!-- Incident Type -->
+                            <div>
+                                <label for="edit_incident_type"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Incident Type
+                                </label>
+                                <select id="edit_incident_type" name="incident_type_id"
+                                    class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">All</option>
+                                    <?php foreach ($incidentTypes as $type): ?>
+                                        <option value="<?= $type['type_id'] ?>">
+                                            <?= htmlspecialchars($type['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <!-- Impact Level -->
+                            <div>
+                                <label for="edit_impact"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Impact Level <span class="text-red-500">*</span>
+                                </label>
+                                <select id="edit_impact" name="impact_level" required
+                                    class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="Low">Low</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="High">High</option>
+                                    <option value="Critical">Critical</option>
+                                </select>
+                            </div>
+
+                            <!-- Priority -->
+                            <div>
+                                <label for="edit_priority"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Priority <span class="text-red-500">*</span>
+                                </label>
+                                <select id="edit_priority" name="priority" required
+                                    class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="Low">Low</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="High">High</option>
+                                    <option value="Urgent">Urgent</option>
+                                </select>
+                            </div>
+
+                            <!-- Actual Start Time -->
+                            <div>
+                                <label for="edit_start_time"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Actual Start Time <span class="text-red-500">*</span>
+                                </label>
+                                <input type="datetime-local" id="edit_start_time" name="actual_start_time" required
+                                    class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
+                            </div>
+                        </div>
+
+                        <!-- Description -->
+                        <div>
+                            <label for="edit_description"
+                                class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Description
+                            </label>
+                            <textarea id="edit_description" name="description" rows="3"
+                                class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="Describe the incident..."></textarea>
+                        </div>
+
+                        <!-- Attachments Management -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Attachments
+                            </label>
+
+                            <!-- Existing Attachments -->
+                            <div x-show="existingAttachments.length > 0" class="mb-3">
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">Current Attachments:</p>
+                                <div class="space-y-2">
+                                    <template x-for="(attachment, index) in existingAttachments"
+                                        :key="attachment.attachment_id">
+                                        <div class="flex items-center justify-between p-2 border rounded-md"
+                                            :class="attachment.markedForDeletion ? 'border-red-300 bg-red-50 dark:bg-red-900/20' : 'border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700'">
+                                            <div class="flex items-center space-x-2 flex-1 min-w-0">
+                                                <i class="fas fa-file text-gray-400"
+                                                    :class="attachment.markedForDeletion ? 'text-red-400' : 'text-gray-400'"></i>
+                                                <span class="text-sm truncate"
+                                                    :class="attachment.markedForDeletion ? 'line-through text-red-500' : 'text-gray-700 dark:text-gray-300'"
+                                                    x-text="attachment.file_name"></span>
+                                            </div>
+                                            <button type="button"
+                                                @click="attachment.markedForDeletion ? unmarkForDeletion(attachment.attachment_id) : markForDeletion(attachment.attachment_id, attachment.file_path)"
+                                                class="text-gray-400 hover:text-red-500 focus:outline-none transition-colors ml-2"
+                                                :class="attachment.markedForDeletion ? 'text-green-500 hover:text-green-600' : ''">
+                                                <i class="fas text-lg"
+                                                    :class="attachment.markedForDeletion ? 'fa-undo' : 'fa-times'"></i>
+                                            </button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <!-- New File Previews -->
+                            <template x-if="newFilePreviews.length > 0">
+                                <div class="mb-3 space-y-2">
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">New Attachments:</p>
+                                    <template x-for="(preview, index) in newFilePreviews" :key="index">
+                                        <div
+                                            class="border border-gray-300 dark:border-gray-600 rounded-lg p-3 bg-white dark:bg-gray-700">
+                                            <div class="flex items-center gap-3">
+                                                <!-- Preview Icon/Image -->
+                                                <div class="flex-shrink-0">
+                                                    <template x-if="preview.type === 'image'">
+                                                        <img :src="preview.url" class="w-12 h-12 object-cover rounded"
+                                                            alt="Preview">
+                                                    </template>
+                                                    <template x-if="preview.type === 'document'">
+                                                        <div
+                                                            class="w-12 h-12 bg-blue-100 dark:bg-blue-900 rounded flex items-center justify-center">
+                                                            <i
+                                                                class="fas fa-file-alt text-blue-600 dark:text-blue-400 text-xl"></i>
+                                                        </div>
+                                                    </template>
+                                                </div>
+
+                                                <!-- File Info -->
+                                                <div class="flex-1 min-w-0">
+                                                    <label
+                                                        class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                                                        Display Name
+                                                    </label>
+                                                    <input type="text" x-model="preview.customName"
+                                                        :name="'new_file_custom_names[' + index + ']'"
+                                                        class="block w-full text-sm border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-1.5 px-2 bg-white dark:bg-gray-800 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+                                                        placeholder="Enter display name...">
+                                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                                        Original: <span x-text="preview.name"></span>
+                                                    </p>
+                                                </div>
+
+                                                <!-- Remove Button -->
+                                                <button @click="removeNewFile(index)" type="button"
+                                                    class="self-center text-gray-400 hover:text-red-500 focus:outline-none transition-colors">
+                                                    <i class="fas fa-times text-lg"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+
+                            <!-- File Upload Input -->
+                            <div
+                                class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-4 text-center hover:border-blue-400 dark:hover:border-blue-500 transition-colors">
+                                <div class="flex text-sm text-gray-600 dark:text-gray-400 justify-center">
+                                    <label for="new_attachments"
+                                        class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 px-2 py-0.5 border border-blue-600/20">
+                                        <span>Upload files</span>
+                                        <input id="new_attachments" name="new_attachments[]" type="file" class="sr-only"
+                                            x-ref="newFileInput" @change="handleNewFiles" multiple>
+                                    </label>
+                                    <p class="pl-1">or drag and drop</p>
+                                </div>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    PNG, JPG, GIF, PDF, DOC, TXT up to 10MB each
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Affected Companies -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Affected Companies <span class="text-red-500">*</span>
+                            </label>
+                            <div
+                                class="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-md p-3">
+                                <?php foreach ($companies as $company): ?>
+                                    <label class="flex items-center space-x-2 text-sm">
+                                        <input type="checkbox" name="companies[]" value="<?= $company['company_id'] ?>"
+                                            class="edit-company-checkbox rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500">
+                                        <span class="text-gray-700 dark:text-gray-300">
+                                            <?= htmlspecialchars($company['company_name']) ?>
+                                        </span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                            <button type="button" onclick="hideEditModal()"
+                                class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                Cancel
+                            </button>
+                            <button type="submit"
+                                class="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                <i class="fas fa-save mr-1"></i> Save Changes
                             </button>
                         </div>
                     </form>
@@ -1115,26 +1646,31 @@ try {
                 const currentDateTime = `${year}-${month}-${day}T${hours}:${minutes}`;
                 document.getElementById('resolved_date').value = currentDateTime;
 
-                // Get Alpine.js component data
+                // Get the form element
                 const form = document.getElementById('resolveForm');
-                const alpineData = Alpine.$data(form);
 
-                // Check if root cause exists
-                if (rootCause && rootCause.trim() !== '') {
-                    alpineData.showRootCause = false;
-                    alpineData.currentRootCause = rootCause;
-                } else {
-                    alpineData.showRootCause = true;
-                    alpineData.currentRootCause = '';
-                }
+                // Set Alpine.js data using x-data attributes
+                form.setAttribute('x-data', JSON.stringify({
+                    rootCauseMode: 'text',
+                    lessonsMode: 'text',
+                    rootCauseFileName: '',
+                    lessonsFileName: ''
+                }));
 
                 // Show modal with animation
                 modal.classList.remove('hidden');
                 setTimeout(() => {
                     modalContent.classList.remove('opacity-0', 'scale-95');
                     modalContent.classList.add('opacity-100', 'scale-100');
+
+                    // Pre-populate the root cause textarea if it exists
+                    const rootCauseTextarea = document.getElementById('root_cause_textarea');
+                    if (rootCauseTextarea && rootCause) {
+                        rootCauseTextarea.value = rootCause;
+                    }
+
                     document.getElementById('resolve_name').focus();
-                }, 10);
+                }, 100);
             }
 
             function hideResolveModal() {
@@ -1160,12 +1696,159 @@ try {
                 }
             });
 
+            // Edit Modal Functions
+            function showEditModal(incidentId) {
+                // Fetch incident data with attachments
+                fetch(`get_incident.php?id=${incidentId}&include_attachments=1`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            alert(data.error);
+                            return;
+                        }
+
+                        // Populate form fields
+                        document.getElementById('edit_incident_id').value = data.incident_id;
+                        document.getElementById('editModalIncidentInfo').textContent = `Incident #${data.incident_id} - ${data.service_name}`;
+                        document.getElementById('edit_service').value = data.service_id || '';
+                        document.getElementById('edit_component').value = data.component_id || '';
+                        document.getElementById('edit_incident_type').value = data.incident_type_id || '';
+                        document.getElementById('edit_impact').value = data.impact_level;
+                        document.getElementById('edit_priority').value = data.priority;
+                        document.getElementById('edit_description').value = data.description || '';
+
+                        // Format datetime for datetime-local input
+                        if (data.actual_start_time) {
+                            const date = new Date(data.actual_start_time);
+                            const year = date.getFullYear();
+                            const month = String(date.getMonth() + 1).padStart(2, '0');
+                            const day = String(date.getDate()).padStart(2, '0');
+                            const hours = String(date.getHours()).padStart(2, '0');
+                            const minutes = String(date.getMinutes()).padStart(2, '0');
+                            document.getElementById('edit_start_time').value = `${year}-${month}-${day}T${hours}:${minutes}`;
+                        }
+
+                        // Check affected companies
+                        const allEditCheckboxes = document.querySelectorAll('.edit-company-checkbox');
+                        const allEditCheckbox = Array.from(allEditCheckboxes).find(cb => cb.value === '3'); // Assuming "All" has company_id = 3
+                        const otherEditCheckboxes = Array.from(allEditCheckboxes).filter(cb => cb.value !== '3');
+
+                        // First, uncheck all
+                        allEditCheckboxes.forEach(checkbox => {
+                            checkbox.checked = false;
+                        });
+
+                        // Then check the appropriate ones
+                        data.affected_companies.forEach(companyId => {
+                            const checkbox = document.querySelector(`.edit-company-checkbox[value="${companyId}"]`);
+                            if (checkbox) {
+                                checkbox.checked = true;
+                            }
+                        });
+
+                        // If "All" is checked, uncheck others
+                        if (allEditCheckbox && allEditCheckbox.checked) {
+                            otherEditCheckboxes.forEach(cb => cb.checked = false);
+                        }
+
+                        // Add event listeners for exclusive selection
+                        if (allEditCheckbox) {
+                            allEditCheckbox.addEventListener('change', function () {
+                                if (this.checked) {
+                                    otherEditCheckboxes.forEach(cb => cb.checked = false);
+                                }
+                            });
+
+                            otherEditCheckboxes.forEach(checkbox => {
+                                checkbox.addEventListener('change', function () {
+                                    if (this.checked) {
+                                        allEditCheckbox.checked = false;
+                                    }
+                                });
+                            });
+                        }
+
+                        // Load existing attachments into Alpine.js
+                        console.log('Attachment data received:', data.attachments);
+                        if (data.attachments && data.attachments.length > 0) {
+                            // Wait for modal to be visible before accessing Alpine data
+                            setTimeout(() => {
+                                const form = document.getElementById('editForm');
+                                if (form && form._x_dataStack) {
+                                    const alpineData = form._x_dataStack[0];
+                                    console.log('Alpine data found:', alpineData);
+                                    alpineData.existingAttachments = data.attachments.map(att => ({
+                                        ...att,
+                                        markedForDeletion: false
+                                    }));
+                                    alpineData.attachmentsToDelete = [];
+                                    alpineData.newFilePreviews = [];
+                                    console.log('Attachments loaded:', alpineData.existingAttachments);
+                                } else {
+                                    console.error('Alpine.js data not found on form element');
+                                }
+                            }, 100);
+                        } else {
+                            console.log('No attachments found for this incident');
+                        }
+
+                        // Show modal with animation
+                        const modal = document.getElementById('editModal');
+                        const modalContent = document.getElementById('editModalContent');
+                        modal.classList.remove('hidden');
+                        setTimeout(() => {
+                            modalContent.classList.remove('opacity-0', 'scale-95');
+                            modalContent.classList.add('opacity-100', 'scale-100');
+                        }, 10);
+                    })
+                    .catch(error => {
+                        console.error('Error fetching incident data:', error);
+                        alert('Failed to load incident data. Please try again.');
+                    });
+            }
+
+            function hideEditModal() {
+                const modal = document.getElementById('editModal');
+                const modalContent = document.getElementById('editModalContent');
+
+                // Hide with animation
+                modalContent.classList.remove('opacity-100', 'scale-100');
+                modalContent.classList.add('opacity-0', 'scale-95');
+
+                // Hide modal after animation
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    document.getElementById('editForm').reset();
+                }, 200);
+            }
+
+            // Close edit modal when clicking outside
+            document.getElementById('editModal').addEventListener('click', function (e) {
+                if (e.target === this) {
+                    hideEditModal();
+                }
+            });
+
+            // Handle edit form submission
+            document.getElementById('editForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+
+                // Validate at least one company is selected
+                const selectedCompanies = document.querySelectorAll('.edit-company-checkbox:checked');
+                if (selectedCompanies.length === 0) {
+                    alert('Please select at least one affected company.');
+                    return;
+                }
+
+                // Submit form
+                this.submit();
+            });
+
             // Handle form submission with validation
             document.getElementById('resolveForm').addEventListener('submit', function (e) {
                 e.preventDefault(); // Always prevent default first
 
                 const form = this;
-                const alpineData = Alpine.$data(form);
                 const errors = [];
 
                 // Validate resolution date
@@ -1174,22 +1857,16 @@ try {
                     errors.push('Resolution date is required.');
                 }
 
-                // Validate root cause (if shown)
-                if (alpineData.showRootCause) {
-                    const rootCauseText = form.querySelector('textarea[name="root_cause"]')?.value.trim() || '';
-                    const rootCauseFile = form.querySelector('input[name="root_cause_file"]')?.files[0];
-
-                    if (!rootCauseText && !rootCauseFile) {
-                        errors.push('Root cause is required (either text or file).');
-                    }
+                // Validate root cause text
+                const rootCauseText = form.querySelector('textarea[name="root_cause"]')?.value.trim() || '';
+                if (!rootCauseText) {
+                    errors.push('Root cause is required.');
                 }
 
-                // Validate lessons learned
+                // Validate lessons learned text
                 const lessonsText = form.querySelector('textarea[name="lessons_learned"]')?.value.trim() || '';
-                const lessonsFile = form.querySelector('input[name="lessons_learned_file"]')?.files[0];
-
-                if (!lessonsText && !lessonsFile) {
-                    errors.push('Lessons learned is required (either text or file).');
+                if (!lessonsText) {
+                    errors.push('Lessons learned is required.');
                 }
 
                 // If there are errors, show them and don't submit
@@ -1201,6 +1878,7 @@ try {
                 // If validation passes, submit the form
                 form.submit();
             });
+
 
             // Close modal with ESC key
             document.addEventListener('keydown', function (e) {

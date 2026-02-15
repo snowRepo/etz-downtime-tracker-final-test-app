@@ -100,8 +100,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     if (!empty($_POST['company_ids']) && is_array($_POST['company_ids'])) {
         foreach ($_POST['company_ids'] as $company_id) {
             if ($company_id === 'all') {
-                // If 'all' is selected, get all company IDs except 'all' itself
-                $company_ids = array_map(function($c) { return $c['company_id']; }, $otherCompanies);
+                // If 'all' is selected, store only the "All" company ID (company_id = 3)
+                // Find the "All" company ID
+                $allCompany = array_filter($companies, function($c) {
+                    return strtolower($c['company_name']) === 'all';
+                });
+                if (!empty($allCompany)) {
+                    $allCompany = reset($allCompany);
+                    $company_ids = [$allCompany['company_id']];
+                }
                 break;
             }
             $company_id = filter_var($company_id, FILTER_VALIDATE_INT);
@@ -151,9 +158,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                 // Move uploaded file
                 if (move_uploaded_file($fileTmpPath, $dest_path)) {
+                    // Get custom name if provided, otherwise use original filename
+                    $customName = $fileName; // Default to original
+                    if (isset($_POST['file_custom_names'][$i]) && !empty(trim($_POST['file_custom_names'][$i]))) {
+                        // Sanitize custom name to prevent XSS and path traversal
+                        $customName = trim($_POST['file_custom_names'][$i]);
+                        $customName = preg_replace('/[^a-zA-Z0-9_\-\.\s]/', '', $customName);
+                        // Ensure it has an extension
+                        if (pathinfo($customName, PATHINFO_EXTENSION) === '') {
+                            $customName .= '.' . $fileExtension;
+                        }
+                    }
+                    
                     $uploaded_files[] = [
                         'file_path' => 'uploads/incidents/' . $newFileName,
-                        'file_name' => $fileName,
+                        'file_name' => $customName, // Use custom name for display
                         'file_type' => $fileType,
                         'file_size' => $fileSize
                     ];
@@ -411,6 +430,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             files.forEach(file => {
                                 const preview = {
                                     name: file.name,
+                                    customName: file.name, // Default to original name, user can edit
                                     type: imageTypes.includes(file.type) ? 'image' : 'document',
                                     url: null
                                 };
@@ -635,21 +655,45 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 
                                 <!-- File Previews Grid -->
                                 <template x-if="filePreviews.length > 0">
-                                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                                    <div class="space-y-3 mb-4">
                                         <template x-for="(preview, index) in filePreviews" :key="index">
-                                            <div class="relative group">
-                                                <template x-if="preview.type === 'image'">
-                                                    <img :src="preview.url" class="h-24 w-full object-cover rounded-lg shadow-sm">
-                                                </template>
-                                                <template x-if="preview.type === 'document'">
-                                                    <div class="h-24 w-full bg-gray-200 dark:bg-gray-600 rounded-lg shadow-sm flex flex-col items-center justify-center p-2">
-                                                        <i class="fas fa-file-alt text-3xl text-gray-500 dark:text-gray-300 mb-1"></i>
-                                                        <span class="text-xs text-gray-600 dark:text-gray-300 truncate w-full text-center" x-text="preview.name"></span>
+                                            <div class="relative group bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
+                                                <div class="flex items-start gap-3">
+                                                    <!-- File Preview -->
+                                                    <div class="flex-shrink-0">
+                                                        <template x-if="preview.type === 'image'">
+                                                            <img :src="preview.url" class="h-16 w-16 object-cover rounded shadow-sm">
+                                                        </template>
+                                                        <template x-if="preview.type === 'document'">
+                                                            <div class="h-16 w-16 bg-gray-200 dark:bg-gray-600 rounded shadow-sm flex items-center justify-center">
+                                                                <i class="fas fa-file-alt text-2xl text-gray-500 dark:text-gray-300"></i>
+                                                            </div>
+                                                        </template>
                                                     </div>
-                                                </template>
-                                                <button @click="removeFile(index)" type="button" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1.5 hover:bg-red-600 focus:outline-none shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <i class="fas fa-times text-xs"></i>
-                                                </button>
+                                                    
+                                                    <!-- File Info and Editable Name -->
+                                                    <div class="flex-1 min-w-0">
+                                                        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                                                            Display Name
+                                                        </label>
+                                                        <input 
+                                                            type="text" 
+                                                            x-model="preview.customName"
+                                                            class="block w-full text-sm border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-1.5 px-2 bg-white dark:bg-gray-800 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+                                                            placeholder="Enter display name..."
+                                                        >
+                                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                                            Original: <span x-text="preview.name"></span>
+                                                        </p>
+                                                        <!-- Hidden input to pass custom name to backend -->
+                                                        <input type="hidden" :name="'file_custom_names[' + index + ']'" :value="preview.customName">
+                                                    </div>
+                                                    
+                                                    <!-- Remove Button -->
+                                                    <button @click="removeFile(index)" type="button" class="self-center text-gray-400 hover:text-red-500 focus:outline-none transition-colors">
+                                                        <i class="fas fa-times text-lg"></i>
+                                                    </button>
+                                                </div>
                                             </div>
                                         </template>
                                     </div>
@@ -878,14 +922,40 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             // Initialize with any pre-selected companies
             updateSelectedCompanies();
             
-            // Handle 'All' checkbox on page load
+            // Handle 'All' checkbox - make it exclusive
             const allCheckbox = document.querySelector('input[value="all"]');
-            if (allCheckbox && allCheckbox.checked) {
-                // Check all checkboxes when 'All' is checked on page load
-                companyCheckboxes.forEach(checkbox => {
-                    checkbox.checked = true;
+            const otherCheckboxes = Array.from(companyCheckboxes).filter(cb => cb.value !== 'all');
+            
+            if (allCheckbox) {
+                // When "All" is clicked
+                allCheckbox.addEventListener('change', function() {
+                    if (this.checked) {
+                        // Uncheck all other checkboxes
+                        otherCheckboxes.forEach(checkbox => {
+                            checkbox.checked = false;
+                        });
+                    }
+                    updateSelectedCompanies();
                 });
-                updateSelectedCompanies();
+                
+                // When any other checkbox is clicked
+                otherCheckboxes.forEach(checkbox => {
+                    checkbox.addEventListener('change', function() {
+                        if (this.checked) {
+                            // Uncheck "All"
+                            allCheckbox.checked = false;
+                        }
+                        updateSelectedCompanies();
+                    });
+                });
+                
+                // On page load, if "All" is checked, uncheck others
+                if (allCheckbox.checked) {
+                    otherCheckboxes.forEach(checkbox => {
+                        checkbox.checked = false;
+                    });
+                    updateSelectedCompanies();
+                }
             }
             
             // Service details filtering
