@@ -35,55 +35,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $companyId) {
         $slaStmt->execute([$companyId]);
         $slaTarget = $slaStmt->fetch(PDO::FETCH_COLUMN) ?: 99.99;
 
+        // Get the "All" company ID so incidents reported for all companies are included
+        $allCoStmt = $pdo->query("SELECT company_id FROM companies WHERE LOWER(company_name) = 'all' LIMIT 1");
+        $allCompanyId = $allCoStmt ? $allCoStmt->fetchColumn() : null;
+
+        // Build the company filter: always include incidents linked to the specific company
+        // AND incidents linked to the "All" company (which affect every company's SLA)
+        $companyFilter = $allCompanyId
+            ? 'iac.company_id IN (?, ?)'
+            : 'iac.company_id = ?';
+
         // Get all incidents for the company with optional downtime data
         $stmt = $pdo->prepare("
         SELECT 
             i.*,
-            s.service_name,
-            s.service_id,
-            di.incident_id as has_downtime_entry,
-            COALESCE(di.actual_start_time, i.created_at) as actual_start_time,
-            di.actual_end_time,
-            -- Only calculate downtime if incident has downtime_incidents entry
-            -- This excludes: non-downtime incidents AND planned maintenance
+            ANY_VALUE(s.service_name) as service_name,
+            ANY_VALUE(s.service_id) as service_id,
+            ANY_VALUE(di.incident_id) as has_downtime_entry,
+            COALESCE(ANY_VALUE(di.actual_start_time), i.created_at) as actual_start_time,
+            ANY_VALUE(di.actual_end_time) as actual_end_time,
             CASE 
-                WHEN di.incident_id IS NOT NULL AND i.status = 'resolved' THEN 
-                    -- Use resolved_at from incidents table (set by user when resolving)
+                WHEN ANY_VALUE(di.incident_id) IS NOT NULL AND i.status = 'resolved' THEN 
                     TIMESTAMPDIFF(MINUTE, i.created_at, i.resolved_at)
-                WHEN di.incident_id IS NOT NULL AND i.status = 'pending' THEN 
-                    -- Ongoing incident - calculate from created_at to NOW
+                WHEN ANY_VALUE(di.incident_id) IS NOT NULL AND i.status = 'pending' THEN 
                     TIMESTAMPDIFF(MINUTE, i.created_at, NOW())
                 ELSE 
-                    -- No downtime entry = no SLA impact
                     0
             END as downtime_minutes,
-            di.is_planned,
-            di.downtime_category
+            ANY_VALUE(di.is_planned) as is_planned,
+            ANY_VALUE(di.downtime_category) as downtime_category
         FROM incidents i
         JOIN incident_affected_companies iac ON i.incident_id = iac.incident_id
         LEFT JOIN services s ON i.service_id = s.service_id
         LEFT JOIN downtime_incidents di ON i.incident_id = di.incident_id
-        WHERE iac.company_id = ? 
+        WHERE $companyFilter
         AND (
-            (i.created_at BETWEEN ? AND ?)  -- Created in range
-            OR (i.status = 'resolved' AND i.updated_at BETWEEN ? AND ?)  -- Resolved in range
-            OR (i.created_at <= ? AND (i.status = 'pending' OR i.updated_at >= ?))  -- Ongoing during range
+            (i.created_at BETWEEN ? AND ?)
+            OR (i.status = 'resolved' AND i.updated_at BETWEEN ? AND ?)
+            OR (i.created_at <= ? AND (i.status = 'pending' OR i.updated_at >= ?))
         )
+        GROUP BY i.incident_id
         ORDER BY i.created_at DESC
     ");
 
+
         $startDateTime = $startDate . ' 00:00:00';
         $endDateTime = $endDate . ' 23:59:59';
-        $stmt->execute([
-            $companyId,
-            $startDateTime,
-            $endDateTime,  // Created in range
-            $startDateTime,
-            $endDateTime,  // Resolved in range
-            $endDateTime,
-            $startDateTime   // Ongoing during range
-        ]);
+
+        $bindParams = $allCompanyId
+            ? [$companyId, $allCompanyId, $startDateTime, $endDateTime, $startDateTime, $endDateTime, $endDateTime, $startDateTime]
+            : [$companyId, $startDateTime, $endDateTime, $startDateTime, $endDateTime, $endDateTime, $startDateTime];
+
+        $stmt->execute($bindParams);
         $incidents = $stmt->fetchAll();
+
 
         // Calculate total downtime and group by service
         $totalDowntime = 0;

@@ -26,6 +26,8 @@ try {
             i.impact_level,
             i.priority,
             i.actual_start_time,
+            i.resolved_at,
+            i.status,
             i.attachment_path,
             s.service_name
         FROM incidents i
@@ -51,6 +53,28 @@ try {
 
     // Convert to integers
     $incident['affected_companies'] = array_map('intval', $affectedCompanies);
+
+    // Fetch involved officers
+    $officersStmt = $pdo->prepare("
+        SELECT user_id, external_name 
+        FROM incident_officers 
+        WHERE incident_id = ?
+    ");
+    $officersStmt->execute([$incidentId]);
+    $officers = $officersStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $incident['involved_users'] = [];
+    $externalNames = [];
+
+    foreach ($officers as $officer) {
+        if (!empty($officer['user_id'])) {
+            $incident['involved_users'][] = intval($officer['user_id']);
+        }
+        if (!empty($officer['external_name'])) {
+            $externalNames[] = $officer['external_name'];
+        }
+    }
+    $incident['external_names'] = implode(', ', $externalNames);
 
     // Fetch attachments if requested
     if (isset($_GET['include_attachments']) && $_GET['include_attachments'] == '1') {

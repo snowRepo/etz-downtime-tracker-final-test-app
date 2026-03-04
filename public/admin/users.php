@@ -180,16 +180,16 @@ $users = $stmt->fetchAll();
                         <thead class="bg-gray-50 dark:bg-gray-900/50">
                             <tr>
                                 <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
+                                    class="px-6 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
                                     User</th>
                                 <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
+                                    class="px-6 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
                                     Email</th>
                                 <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
+                                    class="px-6 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
                                     Role</th>
                                 <th
-                                    class="px-6 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
+                                    class="px-6 py-3 text-center text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">
                                     Last Login</th>
                                 <th
                                     class="px-6 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400 uppercase">

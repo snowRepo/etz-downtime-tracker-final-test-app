@@ -16,7 +16,7 @@ $maxRequests = 5;
 
 if (isset($_SESSION[$rateLimitKey])) {
     list($count, $timestamp) = explode('|', $_SESSION[$rateLimitKey]);
-    
+
     if (($currentTime - $timestamp) < $rateWindow) {
         if ($count >= $maxRequests) {
             die("Too many requests. Please try again later.");
@@ -32,7 +32,8 @@ if (isset($_SESSION[$rateLimitKey])) {
 $_SESSION[$rateLimitKey] = "$count|$currentTime";
 
 // Helper function to sanitize output
-function sanitize($data) {
+function sanitize($data)
+{
     return htmlspecialchars($data, ENT_QUOTES, 'UTF-8');
 }
 
@@ -41,14 +42,14 @@ try {
     $services = $pdo->query("SELECT * FROM services ORDER BY service_name")->fetchAll(PDO::FETCH_ASSOC);
     $components = $pdo->query("SELECT * FROM service_components WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
     $incidentTypes = $pdo->query("SELECT * FROM incident_types WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-    
+
     // Fetch all companies and sort them with 'All' first, then alphabetically
     $allCompanies = $pdo->query("SELECT * FROM companies")->fetchAll(PDO::FETCH_ASSOC);
-    
+
     // Separate 'All' from other companies
     $allOption = [];
     $otherCompanies = [];
-    
+
     foreach ($allCompanies as $company) {
         if (strtolower($company['company_name']) === 'all') {
             $allOption[] = $company;
@@ -56,15 +57,21 @@ try {
             $otherCompanies[] = $company;
         }
     }
-    
+
     // Sort other companies alphabetically
-    usort($otherCompanies, function($a, $b) {
+    usort($otherCompanies, function ($a, $b) {
         return strcasecmp($a['company_name'], $b['company_name']);
     });
-    
+
     // Combine 'All' with the rest of the companies
     $companies = array_merge($allOption, $otherCompanies);
-} catch(PDOException $e) {
+
+    // Fetch the current reporter's mobile number from DB
+    $mobileStmt = $pdo->prepare("SELECT mobile_number FROM users WHERE user_id = ?");
+    $mobileStmt->execute([$_SESSION['user_id']]);
+    $reporterMobile = $mobileStmt->fetchColumn() ?: null;
+
+} catch (PDOException $e) {
     error_log("Database error: " . $e->getMessage());
     die("An error occurred. Please try again later.");
 }
@@ -84,17 +91,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $impact_level = in_array($_POST['impact_level'] ?? '', ['Low', 'Medium', 'High', 'Critical']) ? $_POST['impact_level'] : 'Low';
     $description = trim(filter_var($_POST['description'] ?? '', FILTER_SANITIZE_STRING));
     $root_cause = trim(filter_var($_POST['root_cause'] ?? '', FILTER_SANITIZE_STRING));
-    
+
     // Handle incident date and time
     $incident_date = $_POST['incident_date'] ?? date('Y-m-d');
     $incident_time = $_POST['incident_time'] ?? date('H:i');
     $actual_start_time = $incident_date . ' ' . $incident_time . ':00';
-    
-    $is_planned = isset($_POST['is_planned']) ? 1 : 0;
+
     $downtime_category = in_array($_POST['downtime_category'] ?? '', ['Network', 'Server', 'Maintenance', 'Third-party', 'Other']) ? $_POST['downtime_category'] : 'Other';
     $priority = in_array($_POST['priority'] ?? '', ['Low', 'Medium', 'High', 'Urgent']) ? $_POST['priority'] : 'Medium';
     $status = 'pending';
-    
+
     // Validate and deduplicate company IDs
     $company_ids = [];
     if (!empty($_POST['company_ids']) && is_array($_POST['company_ids'])) {
@@ -102,7 +108,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             if ($company_id === 'all') {
                 // If 'all' is selected, store only the "All" company ID (company_id = 3)
                 // Find the "All" company ID
-                $allCompany = array_filter($companies, function($c) {
+                $allCompany = array_filter($companies, function ($c) {
                     return strtolower($c['company_name']) === 'all';
                 });
                 if (!empty($allCompany)) {
@@ -118,16 +124,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
         $company_ids = array_values(array_unique($company_ids));
     }
-    
+
     // Handle multiple file uploads
     $attachment_path = null; // Keep for backward compatibility (first file)
     $uploaded_files = [];
-    
+
     if (isset($_FILES['evidence']) && !empty($_FILES['evidence']['name'][0])) {
         $allowedfileExtensions = array('jpg', 'jpeg', 'gif', 'png', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt');
         $uploadFileDir = __DIR__ . '/uploads/incidents/';
         $maxFileSize = 10 * 1024 * 1024; // 10MB
-        
+
         // Loop through each file
         $fileCount = count($_FILES['evidence']['name']);
         for ($i = 0; $i < $fileCount; $i++) {
@@ -169,14 +175,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             $customName .= '.' . $fileExtension;
                         }
                     }
-                    
+
                     $uploaded_files[] = [
                         'file_path' => 'uploads/incidents/' . $newFileName,
                         'file_name' => $customName, // Use custom name for display
                         'file_type' => $fileType,
                         'file_size' => $fileSize
                     ];
-                    
+
                     // Set first file as attachment_path for backward compatibility
                     if ($attachment_path === null) {
                         $attachment_path = 'uploads/incidents/' . $newFileName;
@@ -201,7 +207,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     if (strlen($root_cause) > 1000) {
         $errors[] = "Root cause is too long (max 1000 characters).";
     }
-    
+
+    // Validate reporter mobile number when user has none stored
+    $submittedMobile = null;
+    if (empty($reporterMobile)) {
+        $submittedMobile = trim($_POST['reporter_mobile'] ?? '');
+        if (empty($submittedMobile)) {
+            $errors[] = "Please enter your mobile number before submitting.";
+        } elseif (!preg_match('/^[\+\d][\d\s\-]{6,19}$/', $submittedMobile)) {
+            $errors[] = "Please enter a valid mobile number (digits, spaces, hyphens, or leading +).";
+        }
+    }
+
     // Validate incident date/time
     $datetime = DateTime::createFromFormat('Y-m-d H:i:s', $actual_start_time);
     if (!$datetime) {
@@ -209,18 +226,20 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     } elseif ($datetime > new DateTime()) {
         $errors[] = "Incident date/time cannot be in the future.";
     }
-    
+
     if (!empty($errors)) {
         $error = implode(" ", $errors);
     } else {
         // Start transaction
         $pdo->beginTransaction();
         $success = false;
-        
+
         try {
             // Handle expansion
-            $service_ids = ($service_id === 'all') ? array_map(function($s) { return $s['service_id']; }, $services) : [$service_id];
-            
+            $service_ids = ($service_id === 'all') ? array_map(function ($s) {
+                return $s['service_id'];
+            }, $services) : [$service_id];
+
             foreach ($service_ids as $s_id) {
                 // For components and types, we don't expand into multiple incidents.
                 // Instead, we use NULL to represent "All" or "Any" as per the schema.
@@ -231,7 +250,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $sql = "INSERT INTO incidents 
                         (service_id, component_id, incident_type_id, impact_level, priority, description, root_cause, attachment_path, actual_start_time, status, reported_by) 
                         VALUES (:service_id, :component_id, :incident_type_id, :impact_level, :priority, :description, :root_cause, :attachment_path, :actual_start_time, :status, :reported_by)";
-                
+
                 $stmt = $pdo->prepare($sql);
                 $stmt->execute([
                     ':service_id' => $s_id,
@@ -247,7 +266,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     ':reported_by' => $_SESSION['user_id']
                 ]);
                 $incident_id = $pdo->lastInsertId();
-                
+
                 // 2. Insert affected companies
                 $iac_sql = "INSERT INTO incident_affected_companies (incident_id, company_id) VALUES (:incident_id, :company_id)";
                 $iac_stmt = $pdo->prepare($iac_sql);
@@ -257,34 +276,31 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         ':company_id' => $co_id
                     ]);
                 }
-                
-                // 3. Insert into downtime_incidents table ONLY if:
-                //    - "Causes Downtime" is checked AND
-                //    - "Is Planned Maintenance" is NOT checked
-                // This ensures only UNPLANNED downtime affects SLA calculations
+
+                // 3. Insert into downtime_incidents table ONLY if "Causes Downtime" is checked.
+                // This ensures only incidents the reporter flags will affect SLA calculations.
                 $causes_downtime = isset($_POST['causes_downtime']) && $_POST['causes_downtime'] == '1';
-                
-                if ($causes_downtime && $is_planned != 1) {
+
+                if ($causes_downtime) {
                     $downtime_sql = "INSERT INTO downtime_incidents 
-                                    (incident_id, actual_start_time, is_planned, downtime_category)
-                                    VALUES (:incident_id, :actual_start_time, :is_planned, :downtime_category)";
+                                    (incident_id, actual_start_time, downtime_category)
+                                    VALUES (:incident_id, :actual_start_time, :downtime_category)";
                     $downtime_stmt = $pdo->prepare($downtime_sql);
                     $downtime_stmt->execute([
                         ':incident_id' => $incident_id,
                         ':actual_start_time' => $actual_start_time,
-                        ':is_planned' => $is_planned,
                         ':downtime_category' => $downtime_category
                     ]);
                 }
-                
-                
+
+
                 // 4. Insert file attachments into incident_attachments table
                 if (!empty($uploaded_files)) {
                     $attachment_sql = "INSERT INTO incident_attachments 
                                       (incident_id, file_path, file_name, file_type, file_size) 
                                       VALUES (:incident_id, :file_path, :file_name, :file_type, :file_size)";
                     $attachment_stmt = $pdo->prepare($attachment_sql);
-                    
+
                     foreach ($uploaded_files as $file) {
                         $attachment_stmt->execute([
                             ':incident_id' => $incident_id,
@@ -296,10 +312,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     }
                 }
             }
-            
+
             $pdo->commit();
             $success = true;
-            
+
+            // Persist reporter's mobile number to their user record if they just provided it
+            if (!empty($submittedMobile)) {
+                $updateMobileStmt = $pdo->prepare("UPDATE users SET mobile_number = ? WHERE user_id = ?");
+                $updateMobileStmt->execute([$submittedMobile, $_SESSION['user_id']]);
+            }
+
             // Log incident creation
             require_once __DIR__ . '/../src/includes/activity_logger.php';
             logIncidentAction($_SESSION['user_id'], 'created_multiple', null, [
@@ -307,7 +329,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 'impact_level' => $impact_level,
                 'companies_count' => count($company_ids)
             ]);
-            
+
         } catch (Exception $e) {
             // Rollback on error
             if ($pdo->inTransaction()) {
@@ -315,7 +337,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             }
             $error = "Error: " . $e->getMessage();
         }
-        
+
         if ($success) {
             $_SESSION['success'] = "Incident(s) reported successfully!";
             header("Location: report.php");
@@ -326,11 +348,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Report Incident - eTranzact</title>
-    
+
     <!-- Tailwind CSS v3.4.17 -->
     <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio"></script>
     <script>
@@ -338,28 +361,30 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             darkMode: 'class'
         }
     </script>
-    
+
     <!-- Alpine.js v3.x -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    
+
     <!-- Font Awesome 6.5.1 -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
-    
+
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
     <style>
         * {
             font-family: 'Inter', sans-serif;
         }
-        
+
         .form-input:focus {
             transition: all 0.15s ease;
         }
     </style>
 </head>
+
 <body class="relative min-h-screen">
     <!-- Background Image with Overlay -->
     <div class="fixed inset-0 z-0">
@@ -369,58 +394,61 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     <!-- Content Wrapper -->
     <div class="relative z-10">
-    <!-- Navbar -->
-    <?php include __DIR__ . '/../src/includes/navbar.php'; ?>
+        <!-- Navbar -->
+        <?php include __DIR__ . '/../src/includes/navbar.php'; ?>
 
-    <!-- Loading Overlay -->
-    <?php include __DIR__ . '/../src/includes/loading.php'; ?>
+        <!-- Loading Overlay -->
+        <?php include __DIR__ . '/../src/includes/loading.php'; ?>
 
-    <!-- Main Content -->
-    <main class="py-8">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden rounded-xl" style="box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);">
-                <div class="px-6 py-5 sm:px-8 border-b border-gray-200 dark:border-gray-700">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-                                Report New Incident
-                            </h3>
-                            <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                                Fill in the details below to report a new downtime incident
-                            </p>
-                        </div>
-                    </div>
-                </div>
-                
-                <?php if (!empty($error)): ?>
-                    <div class="bg-red-50 border-l-4 border-red-500 p-4 mx-6 mt-6 rounded-r-lg animate-slide-in">
-                        <div class="flex">
-                            <div class="flex-shrink-0">
-                                <i class="fas fa-exclamation-circle text-red-500 text-xl"></i>
-                            </div>
-                            <div class="ml-3">
-                                <p class="text-sm font-medium text-red-800"><?php echo htmlspecialchars($error); ?></p>
+        <!-- Main Content -->
+        <main class="py-8">
+            <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 overflow-hidden rounded-xl"
+                    style="box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03);">
+                    <div class="px-6 py-5 sm:px-8 border-b border-gray-200 dark:border-gray-700">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+                                    Report New Incident
+                                </h3>
+                                <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                    Fill in the details below to report a new downtime incident
+                                </p>
                             </div>
                         </div>
                     </div>
-                <?php endif; ?>
-                
-                <?php if (isset($_SESSION['success'])): ?>
-                    <div class="bg-green-50 border-l-4 border-green-500 p-4 mx-6 mt-6 rounded-r-lg animate-slide-in">
-                        <div class="flex">
-                            <div class="flex-shrink-0">
-                                <i class="fas fa-check-circle text-green-500 text-xl"></i>
-                            </div>
-                            <div class="ml-3">
-                                <p class="text-sm font-medium text-green-800"><?php echo htmlspecialchars($_SESSION['success']); ?></p>
+
+                    <?php if (!empty($error)): ?>
+                        <div class="bg-red-50 border-l-4 border-red-500 p-4 mx-6 mt-6 rounded-r-lg animate-slide-in">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <i class="fas fa-exclamation-circle text-red-500 text-xl"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium text-red-800"><?php echo htmlspecialchars($error); ?></p>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    <?php unset($_SESSION['success']); ?>
-                <?php endif; ?>
+                    <?php endif; ?>
 
-                <form action="report.php" method="POST" enctype="multipart/form-data" class="px-6 pb-8 pt-6 sm:px-8 space-y-6"
-                      x-data="{ 
+                    <?php if (isset($_SESSION['success'])): ?>
+                        <div class="bg-green-50 border-l-4 border-green-500 p-4 mx-6 mt-6 rounded-r-lg animate-slide-in">
+                            <div class="flex">
+                                <div class="flex-shrink-0">
+                                    <i class="fas fa-check-circle text-green-500 text-xl"></i>
+                                </div>
+                                <div class="ml-3">
+                                    <p class="text-sm font-medium text-green-800">
+                                        <?php echo htmlspecialchars($_SESSION['success']); ?>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <?php unset($_SESSION['success']); ?>
+                    <?php endif; ?>
+
+                    <form action="report.php" method="POST" enctype="multipart/form-data"
+                        class="px-6 pb-8 pt-6 sm:px-8 space-y-6" x-data="{ 
                         filePreviews: [],
                         selectedFiles: [],
                         handleMultipleFileChange(event) {
@@ -459,689 +487,756 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             fileInput.files = dt.files;
                         }
                       }">
-                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
-                    
-                    <!-- Reporter Info (Read Only) -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            Reporter
-                        </label>
-                        <input type="text" 
-                               value="<?= htmlspecialchars($_SESSION['full_name']) ?>" 
-                               readonly
-                               class="bg-gray-100 dark:bg-gray-600 rounded-lg py-2.5 px-3.5 text-sm text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-500 w-full cursor-not-allowed">
-                    </div>
+                        <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
 
-                    <!-- Service, Component, Type Row -->
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <!-- Service Selection -->
-                        <div>
-                            <label for="service_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Service Affected <span class="text-red-500">*</span>
-                            </label>
-                            <select name="service_id" id="service_id" required onchange="filterDetails()"
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
-                                <option value="">Select service...</option>
-                                <option value="all" <?= (isset($_POST['service_id']) && $_POST['service_id'] === 'all') ? 'selected' : '' ?>>All Services</option>
-                                <?php foreach ($services as $service): ?>
-                                    <option value="<?= $service['service_id'] ?>" <?= (isset($_POST['service_id']) && $_POST['service_id'] == $service['service_id']) ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($service['service_name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <!-- Template Selector -->
-                        <div id="templateSelectorContainer" style="display:none;">
-                            <label for="template_select" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Use a Template
-                                <span class="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(Optional - Quick Fill)</span>
-                            </label>
-                            <select id="template_select"
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
-                                <option value="">Choose a template to auto-fill...</option>
-                            </select>
-                            <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400 flex items-start">
-                                <i class="fas fa-info-circle mr-1.5 mt-0.5"></i>
-                                <span>Select a template to automatically fill the form based on common incidents. You can modify any pre-filled data.</span>
-                            </p>
-                        </div>
-
-
-                        <!-- Component Selection -->
-                        <div>
-                            <label for="component_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Component Affected
-                            </label>
-                            <select name="component_id" id="component_id"
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
-                                <option value="">Select component...</option>
-                                <option value="all" class="component-option">All Components</option>
-                                <?php foreach ($components as $component): ?>
-                                    <option value="<?= $component['component_id'] ?>" data-service="<?= $component['service_id'] ?>" class="component-option hidden">
-                                        <?= htmlspecialchars($component['name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <!-- Incident Type Selection -->
-                        <div>
-                            <label for="incident_type_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Incident Type
-                            </label>
-                            <select name="incident_type_id" id="incident_type_id"
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
-                                <option value="">Select type...</option>
-                                <option value="all" class="type-option">All Incident Types</option>
-                                <?php foreach ($incidentTypes as $type): ?>
-                                    <option value="<?= $type['type_id'] ?>" data-service="<?= $type['service_id'] ?>" class="type-option hidden">
-                                        <?= htmlspecialchars($type['name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Companies Affected -->
-                    <div>
-                        <label for="company_ids" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Companies Affected <span class="text-red-500">*</span>
-                        </label>
-                        <div class="mt-1 relative">
-                            <button type="button" id="company-dropdown-button" class="relative w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm pl-3 pr-10 py-2 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-gray-900 dark:text-white">
-                                <span id="company-selected-text" class="block truncate">Select companies...</span>
-                                <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-                                    <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                        <path fill-rule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                    </svg>
-                                </span>
-                            </button>
-                            <div id="company-dropdown" class="hidden absolute z-10 mt-1 w-full bg-white dark:bg-gray-700 shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 dark:ring-gray-600 overflow-auto focus:outline-none sm:text-sm">
-                                <?php foreach ($companies as $company): ?>
-                                    <div class="flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600">
-                                    <input type="checkbox" id="company-<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>" 
-                                           name="company_ids[]" 
-                                           value="<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>"
-                                           class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                           <?php 
-                                           $isChecked = false;
-                                           if (isset($_POST['company_ids'])) {
-                                               if (strtolower($company['company_name']) === 'all') {
-                                                   $isChecked = in_array('all', $_POST['company_ids']);
-                                               } else {
-                                                   $isChecked = in_array($company['company_id'], $_POST['company_ids']);
-                                               }
-                                           }
-                                           echo $isChecked ? 'checked' : ''; 
-                                           ?>>
-                                    <label for="company-<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>" class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                                        <?php echo htmlspecialchars($company['company_name']); ?>
-                                    </label>
-                                </div>
-                                <?php endforeach; ?>
+                        <!-- Reporter Info (Name + Mobile Grid) -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <!-- Reporter Name -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Reporter
+                                </label>
+                                <input type="text" value="<?= htmlspecialchars($_SESSION['full_name']) ?>" readonly
+                                    class="bg-gray-100 dark:bg-gray-600 rounded-lg py-2.5 px-3.5 text-sm text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-500 w-full cursor-not-allowed">
                             </div>
-                            <div id="selected-companies" class="mt-2 flex flex-wrap gap-2">
-                                <?php if (isset($_POST['company_ids'])): ?>
-                                    <?php foreach ($_POST['company_ids'] as $selected_id): 
-                                        $selected_company = array_filter($companies, function($company) use ($selected_id) {
-                                            return $company['company_id'] == $selected_id;
-                                        });
-                                        $selected_company = reset($selected_company);
-                                        if ($selected_company): ?>
-                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                                <?php echo htmlspecialchars($selected_company['company_name']); ?>
-                                                <input type="hidden" name="company_ids[]" value="<?php echo $selected_company['company_id']; ?>">
-                                            </span>
-                                        <?php endif; ?>
-                                    <?php endforeach; ?>
+
+                            <!-- Reporter Mobile Number -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Mobile Number <?php if (empty($reporterMobile)): ?><span
+                                            class="text-gray-500">*</span><?php endif; ?>
+                                </label>
+                                <?php if (!empty($reporterMobile)): ?>
+                                    <!-- User has a mobile on file — show read-only -->
+                                    <input type="text" value="<?= htmlspecialchars($reporterMobile) ?>" readonly
+                                        class="bg-gray-100 dark:bg-gray-600 rounded-lg py-2.5 px-3.5 text-sm text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-500 w-full cursor-not-allowed">
+                                <?php else: ?>
+                                    <!-- No mobile on file — require entry before submit -->
+                                    <input type="tel" name="reporter_mobile"
+                                        value="<?= htmlspecialchars($_POST['reporter_mobile'] ?? '') ?>" required
+                                        placeholder="Enter your mobile number"
+                                        class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                                        <i class="fas fa-info-circle mr-1"></i>
+                                        Enter mobile number - this will be saved for future reports.
+                                    </p>
                                 <?php endif; ?>
                             </div>
                         </div>
-                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Click to select multiple companies</p>
-                    </div>
 
-                    <!-- Incident Date & Time -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            When Did the Incident Occur? <span class="text-red-500">*</span>
-                        </label>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <!-- Incident Date -->
+                        <!-- Service, Component, Type Row -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <!-- Service Selection -->
                             <div>
-                                <label for="incident_date" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                                    Date
+                                <label for="service_id"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Service Affected <span class="text-red-500">*</span>
                                 </label>
-                                <input type="date" 
-                                       name="incident_date" 
-                                       id="incident_date" 
-                                       value="<?= isset($_POST['incident_date']) ? htmlspecialchars($_POST['incident_date']) : date('Y-m-d') ?>" 
-                                       max="<?= date('Y-m-d') ?>"
-                                       required
-                                       class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <select name="service_id" id="service_id" required onchange="filterDetails()"
+                                    class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Select service...</option>
+                                    <option value="all" <?= (isset($_POST['service_id']) && $_POST['service_id'] === 'all') ? 'selected' : '' ?>>All Services</option>
+                                    <?php foreach ($services as $service): ?>
+                                        <option value="<?= $service['service_id'] ?>" <?= (isset($_POST['service_id']) && $_POST['service_id'] == $service['service_id']) ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($service['service_name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
                             </div>
-                            
-                            <!-- Incident Time -->
-                            <div>
-                                <label for="incident_time" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                                    Time
+
+                            <!-- Template Selector -->
+                            <div id="templateSelectorContainer" style="display:none;">
+                                <label for="template_select"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Use a Template
+                                    <span class="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(Optional -
+                                        Quick Fill)</span>
                                 </label>
-                                <input type="time" 
-                                       name="incident_time" 
-                                       id="incident_time" 
-                                       value="<?= isset($_POST['incident_time']) ? htmlspecialchars($_POST['incident_time']) : date('H:i') ?>" 
-                                       required
-                                       class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                <select id="template_select"
+                                    class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Choose a template to auto-fill...</option>
+                                </select>
+                                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400 flex items-start">
+                                    <i class="fas fa-info-circle mr-1.5 mt-0.5"></i>
+                                    <span>Select a template to automatically fill the form based on common incidents.
+                                        You can modify any pre-filled data.</span>
+                                </p>
+                            </div>
+
+
+                            <!-- Component Selection -->
+                            <div>
+                                <label for="component_id"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Component Affected
+                                </label>
+                                <select name="component_id" id="component_id"
+                                    class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Select component...</option>
+                                    <option value="all" class="component-option">All Components</option>
+                                    <?php foreach ($components as $component): ?>
+                                        <option value="<?= $component['component_id'] ?>"
+                                            data-service="<?= $component['service_id'] ?>" class="component-option hidden">
+                                            <?= htmlspecialchars($component['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <!-- Incident Type Selection -->
+                            <div>
+                                <label for="incident_type_id"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Incident Type
+                                </label>
+                                <select name="incident_type_id" id="incident_type_id"
+                                    class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Select type...</option>
+                                    <option value="all" class="type-option">All Incident Types</option>
+                                    <?php foreach ($incidentTypes as $type): ?>
+                                        <option value="<?= $type['type_id'] ?>" data-service="<?= $type['service_id'] ?>"
+                                            class="type-option hidden">
+                                            <?= htmlspecialchars($type['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
                             </div>
                         </div>
-                        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                            <i class="fas fa-info-circle mr-1"></i>
-                            Specify the actual time when the incident started. This can be in the past but not in the future.
-                        </p>
-                    </div>
 
-                    <!-- File Upload -->
-                    <div class="space-y-2">
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Evidence / Attachments
-                        </label>
-                        <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md hover:border-blue-400 dark:hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-700/50">
-                            <div class="space-y-1 text-center w-full">
-                                <template x-if="filePreviews.length === 0">
-                                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
-                                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                                    </svg>
-                                </template>
-                                
-                                <!-- File Previews Grid -->
-                                <template x-if="filePreviews.length > 0">
-                                    <div class="space-y-3 mb-4">
-                                        <template x-for="(preview, index) in filePreviews" :key="index">
-                                            <div class="relative group bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
-                                                <div class="flex items-start gap-3">
-                                                    <!-- File Preview -->
-                                                    <div class="flex-shrink-0">
-                                                        <template x-if="preview.type === 'image'">
-                                                            <img :src="preview.url" class="h-16 w-16 object-cover rounded shadow-sm">
-                                                        </template>
-                                                        <template x-if="preview.type === 'document'">
-                                                            <div class="h-16 w-16 bg-gray-200 dark:bg-gray-600 rounded shadow-sm flex items-center justify-center">
-                                                                <i class="fas fa-file-alt text-2xl text-gray-500 dark:text-gray-300"></i>
-                                                            </div>
-                                                        </template>
-                                                    </div>
-                                                    
-                                                    <!-- File Info and Editable Name -->
-                                                    <div class="flex-1 min-w-0">
-                                                        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                                                            Display Name
-                                                        </label>
-                                                        <input 
-                                                            type="text" 
-                                                            x-model="preview.customName"
-                                                            class="block w-full text-sm border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-1.5 px-2 bg-white dark:bg-gray-800 dark:text-white focus:ring-blue-500 focus:border-blue-500"
-                                                            placeholder="Enter display name..."
-                                                        >
-                                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                                            Original: <span x-text="preview.name"></span>
-                                                        </p>
-                                                        <!-- Hidden input to pass custom name to backend -->
-                                                        <input type="hidden" :name="'file_custom_names[' + index + ']'" :value="preview.customName">
-                                                    </div>
-                                                    
-                                                    <!-- Remove Button -->
-                                                    <button @click="removeFile(index)" type="button" class="self-center text-gray-400 hover:text-red-500 focus:outline-none transition-colors">
-                                                        <i class="fas fa-times text-lg"></i>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </template>
-                                
-                                <div class="flex text-sm text-gray-600 dark:text-gray-400 justify-center">
-                                    <label for="evidence" class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 px-2 py-0.5 border border-blue-600/20">
-                                        <span>Upload files</span>
-                                        <input id="evidence" name="evidence[]" type="file" class="sr-only" x-ref="fileInput" @change="handleMultipleFileChange" multiple>
-                                    </label>
-                                    <p class="pl-1">or drag and drop</p>
+                        <!-- Companies Affected -->
+                        <div>
+                            <label for="company_ids" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Companies Affected <span class="text-red-500">*</span>
+                            </label>
+                            <div class="mt-1 relative">
+                                <button type="button" id="company-dropdown-button"
+                                    class="relative w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm pl-3 pr-10 py-2 text-left cursor-default focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-gray-900 dark:text-white">
+                                    <span id="company-selected-text" class="block truncate">Select companies...</span>
+                                    <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                                        <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg"
+                                            viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd"
+                                                d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                                                clip-rule="evenodd" />
+                                        </svg>
+                                    </span>
+                                </button>
+                                <div id="company-dropdown"
+                                    class="hidden absolute z-10 mt-1 w-full bg-white dark:bg-gray-700 shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 dark:ring-gray-600 overflow-auto focus:outline-none sm:text-sm">
+                                    <?php foreach ($companies as $company): ?>
+                                        <div class="flex items-center px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-600">
+                                            <input type="checkbox"
+                                                id="company-<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>"
+                                                name="company_ids[]"
+                                                value="<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>"
+                                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                                <?php
+                                                $isChecked = false;
+                                                if (isset($_POST['company_ids'])) {
+                                                    if (strtolower($company['company_name']) === 'all') {
+                                                        $isChecked = in_array('all', $_POST['company_ids']);
+                                                    } else {
+                                                        $isChecked = in_array($company['company_id'], $_POST['company_ids']);
+                                                    }
+                                                }
+                                                echo $isChecked ? 'checked' : '';
+                                                ?>>
+                                            <label
+                                                for="company-<?php echo strtolower($company['company_name']) === 'all' ? 'all' : $company['company_id']; ?>"
+                                                class="ml-3 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                <?php echo htmlspecialchars($company['company_name']); ?>
+                                            </label>
+                                        </div>
+                                    <?php endforeach; ?>
                                 </div>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">
-                                    PNG, JPG, GIF, PDF, DOC, TXT up to 10MB each (multiple files allowed)
-                                </p>
-                                <p x-show="filePreviews.length > 0" x-text="`${filePreviews.length} file(s) selected`" class="text-sm font-medium text-blue-600 dark:text-blue-400 transition-all"></p>
+                                <div id="selected-companies" class="mt-2 flex flex-wrap gap-2">
+                                    <?php if (isset($_POST['company_ids'])): ?>
+                                        <?php foreach ($_POST['company_ids'] as $selected_id):
+                                            $selected_company = array_filter($companies, function ($company) use ($selected_id) {
+                                                return $company['company_id'] == $selected_id;
+                                            });
+                                            $selected_company = reset($selected_company);
+                                            if ($selected_company): ?>
+                                                <span
+                                                    class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                                    <?php echo htmlspecialchars($selected_company['company_name']); ?>
+                                                    <input type="hidden" name="company_ids[]"
+                                                        value="<?php echo $selected_company['company_id']; ?>">
+                                                </span>
+                                            <?php endif; ?>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Click to select multiple companies
+                            </p>
+                        </div>
+
+                        <!-- Incident Date & Time -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                When Did the Incident Occur? <span class="text-red-500">*</span>
+                            </label>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <!-- Incident Date -->
+                                <div>
+                                    <label for="incident_date"
+                                        class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                                        Date
+                                    </label>
+                                    <input type="date" name="incident_date" id="incident_date"
+                                        value="<?= isset($_POST['incident_date']) ? htmlspecialchars($_POST['incident_date']) : date('Y-m-d') ?>"
+                                        max="<?= date('Y-m-d') ?>" required
+                                        class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                </div>
+
+                                <!-- Incident Time -->
+                                <div>
+                                    <label for="incident_time"
+                                        class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                                        Time
+                                    </label>
+                                    <input type="time" name="incident_time" id="incident_time"
+                                        value="<?= isset($_POST['incident_time']) ? htmlspecialchars($_POST['incident_time']) : date('H:i') ?>"
+                                        required
+                                        class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                </div>
+                            </div>
+                            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Specify the actual time when the incident started. This can be in the past but not in
+                                the future.
+                            </p>
+                        </div>
+
+                        <!-- File Upload -->
+                        <div class="space-y-2">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Evidence / Attachments
+                            </label>
+                            <div
+                                class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-md hover:border-blue-400 dark:hover:border-blue-500 transition-colors bg-gray-50 dark:bg-gray-700/50">
+                                <div class="space-y-1 text-center w-full">
+                                    <template x-if="filePreviews.length === 0">
+                                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none"
+                                            viewBox="0 0 48 48" aria-hidden="true">
+                                            <path
+                                                d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02"
+                                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                        </svg>
+                                    </template>
+
+                                    <!-- File Previews Grid -->
+                                    <template x-if="filePreviews.length > 0">
+                                        <div class="space-y-3 mb-4">
+                                            <template x-for="(preview, index) in filePreviews" :key="index">
+                                                <div
+                                                    class="relative group bg-gray-50 dark:bg-gray-700 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
+                                                    <div class="flex items-start gap-3">
+                                                        <!-- File Preview -->
+                                                        <div class="flex-shrink-0">
+                                                            <template x-if="preview.type === 'image'">
+                                                                <img :src="preview.url"
+                                                                    class="h-16 w-16 object-cover rounded shadow-sm">
+                                                            </template>
+                                                            <template x-if="preview.type === 'document'">
+                                                                <div
+                                                                    class="h-16 w-16 bg-gray-200 dark:bg-gray-600 rounded shadow-sm flex items-center justify-center">
+                                                                    <i
+                                                                        class="fas fa-file-alt text-2xl text-gray-500 dark:text-gray-300"></i>
+                                                                </div>
+                                                            </template>
+                                                        </div>
+
+                                                        <!-- File Info and Editable Name -->
+                                                        <div class="flex-1 min-w-0">
+                                                            <label
+                                                                class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                                                                Display Name
+                                                            </label>
+                                                            <input type="text" x-model="preview.customName"
+                                                                class="block w-full text-sm border-gray-300 dark:border-gray-600 rounded-md shadow-sm py-1.5 px-2 bg-white dark:bg-gray-800 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+                                                                placeholder="Enter display name...">
+                                                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                                                Original: <span x-text="preview.name"></span>
+                                                            </p>
+                                                            <!-- Hidden input to pass custom name to backend -->
+                                                            <input type="hidden"
+                                                                :name="'file_custom_names[' + index + ']'"
+                                                                :value="preview.customName">
+                                                        </div>
+
+                                                        <!-- Remove Button -->
+                                                        <button @click="removeFile(index)" type="button"
+                                                            class="self-center text-gray-400 hover:text-red-500 focus:outline-none transition-colors">
+                                                            <i class="fas fa-times text-lg"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+
+                                    <div class="flex text-sm text-gray-600 dark:text-gray-400 justify-center">
+                                        <label for="evidence"
+                                            class="relative cursor-pointer bg-white dark:bg-gray-800 rounded-md font-medium text-blue-600 hover:text-blue-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-blue-500 px-2 py-0.5 border border-blue-600/20">
+                                            <span>Upload files</span>
+                                            <input id="evidence" name="evidence[]" type="file" class="sr-only"
+                                                x-ref="fileInput" @change="handleMultipleFileChange" multiple>
+                                        </label>
+                                        <p class="pl-1">or drag and drop</p>
+                                    </div>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                                        PNG, JPG, GIF, PDF, DOC, TXT up to 10MB each (multiple files allowed)
+                                    </p>
+                                    <p x-show="filePreviews.length > 0"
+                                        x-text="`${filePreviews.length} file(s) selected`"
+                                        class="text-sm font-medium text-blue-600 dark:text-blue-400 transition-all"></p>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Incident Description (Optional) -->
-                    <div>
-                        <label for="description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                            Incident Description
-                           <!-- <span class="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(Optional)</span> -->
-                        </label>
-                        <textarea name="description" id="description" rows="4"
-                            placeholder="Describe what happened during this incident in detail..."
-                            class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500"><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
-                        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                            <i class="fas fa-info-circle mr-1"></i>
-                            Provide a detailed explanation of what occurred. This is separate from the root cause.
-                        </p>
-                    </div>
-
-                    <!-- Impact Level, Priority, and Category - Always visible -->
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <!-- Impact Level -->
+                        <!-- Incident Description (Optional) -->
                         <div>
-                            <label for="impact_level" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Impact Level <span class="text-red-500">*</span>
+                            <label for="description"
+                                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Incident Description
+                                <!-- <span class="text-xs text-gray-500 dark:text-gray-400 font-normal ml-2">(Optional)</span> -->
                             </label>
-                            <select name="impact_level" id="impact_level" required
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
-                                <option value="Low">Low</option>
-                                <option value="Medium">Medium</option>
-                                <option value="High">High</option>
-                                <option value="Critical">Critical</option>
-                            </select>
+                            <textarea name="description" id="description" rows="4"
+                                placeholder="Describe what happened during this incident in detail..."
+                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500"><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
+                            <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Provide a detailed explanation of what occurred. This is separate from the root cause.
+                            </p>
                         </div>
 
-                        <!-- Priority -->
-                        <div>
-                            <label for="priority" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Priority <span class="text-red-500">*</span>
-                            </label>
-                            <select name="priority" id="priority" required
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
-                                <option value="Low">Low</option>
-                                <option value="Medium" selected>Medium</option>
-                                <option value="High">High</option>
-                                <option value="Urgent">Urgent</option>
-                            </select>
-                        </div>
-
-                        <!-- Downtime Category -->
-                        <div>
-                            <label for="downtime_category" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Downtime Category
-                            </label>
-                            <select name="downtime_category" id="downtime_category"
-                                class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
-                                <option value="Network">Network</option>
-                                <option value="Server">Server</option>
-                                <option value="Maintenance">Maintenance</option>
-                                <option value="Third-party">Third-party</option>
-                                <option value="Other">Other</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Planned Maintenance Checkbox -->
-                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-                        <div class="flex items-start">
-                            <div class="flex items-center h-5">
-                                <input id="is_planned" name="is_planned" type="checkbox"
-                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                            </div>
-                            <div class="ml-3">
-                                <label for="is_planned" class="font-medium text-sm text-gray-900 dark:text-white">
-                                    This is planned maintenance
+                        <!-- Impact Level, Priority, and Category - Always visible -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <!-- Impact Level -->
+                            <div>
+                                <label for="impact_level"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Impact Level <span class="text-red-500">*</span>
                                 </label>
-                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    Scheduled maintenance that was communicated in advance. Will NOT affect SLA.
-                                </p>
+                                <select name="impact_level" id="impact_level" required
+                                    class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="Low">Low</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="High">High</option>
+                                    <option value="Critical">Critical</option>
+                                </select>
                             </div>
-                        </div>
-                    </div>
 
-                    <!-- Causes Downtime Checkbox -->
-                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-                        <div class="flex items-start">
-                            <div class="flex items-center h-5">
-                                <input id="causes_downtime" name="causes_downtime" type="checkbox" value="1"
-                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                            </div>
-                            <div class="ml-3">
-                                <label for="causes_downtime" class="font-medium text-sm text-gray-900 dark:text-white">
-                                    This incident caused service downtime (will affect SLA)
+                            <!-- Priority -->
+                            <div>
+                                <label for="priority"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Priority <span class="text-red-500">*</span>
                                 </label>
-                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    Check this if the incident resulted in actual service unavailability or degradation.
-                                    Leave unchecked for informational incidents (e.g., empty OVA, warnings, capacity alerts).
-                                </p>
+                                <select name="priority" id="priority" required
+                                    class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="Low">Low</option>
+                                    <option value="Medium" selected>Medium</option>
+                                    <option value="High">High</option>
+                                    <option value="Urgent">Urgent</option>
+                                </select>
+                            </div>
+
+                            <!-- Downtime Category -->
+                            <div>
+                                <label for="downtime_category"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Downtime Category
+                                </label>
+                                <select name="downtime_category" id="downtime_category"
+                                    class="block w-full border-gray-300 dark:border-gray-600 rounded-lg shadow-sm py-2.5 px-3.5 text-sm bg-white dark:bg-gray-700 dark:text-white focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="Network">Network</option>
+                                    <option value="Server">Server</option>
+                                    <option value="Maintenance">Maintenance</option>
+                                    <option value="Third-party">Third-party</option>
+                                    <option value="Other">Other</option>
+                                </select>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Root Cause -->
-                    <div>
-                        <label for="root_cause" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                            Root Cause
-                        </label>
-                        <div class="mt-1">
-                            <textarea id="root_cause" name="root_cause" rows="3" class="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border border-gray-300 dark:border-gray-600 rounded-md p-3 bg-white dark:bg-gray-700 dark:text-white"><?php echo isset($_POST['root_cause']) ? sanitize($_POST['root_cause']) : ''; ?></textarea>
-                        </div>
-                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Briefly describe what caused the issue (if known)</p>
-                    </div>
 
-                    <div class="pt-5">
-                        <div class="flex justify-end">
-                            <a href="index.php" class="bg-white dark:bg-gray-700 py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                                Cancel
-                            </a>
-                            <button type="submit" class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                                <i class="fas fa-paper-plane mr-2"></i> Report Incident
-                            </button>
+                        <!-- Causes Downtime Checkbox -->
+                        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                            <div class="flex items-start">
+                                <div class="flex items-center h-5">
+                                    <input id="causes_downtime" name="causes_downtime" type="checkbox" value="1"
+                                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                                </div>
+                                <div class="ml-3">
+                                    <label for="causes_downtime"
+                                        class="font-medium text-sm text-gray-900 dark:text-white">
+                                        This incident caused service downtime (will affect SLA)
+                                    </label>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                        Check this if the incident resulted in actual service unavailability or
+                                        degradation.
+                                        Leave unchecked for informational incidents (e.g., empty OVA, warnings, capacity
+                                        alerts).
+                                    </p>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                </form>
+
+                        <!-- Root Cause -->
+                        <div>
+                            <label for="root_cause" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                Root Cause
+                            </label>
+                            <div class="mt-1">
+                                <textarea id="root_cause" name="root_cause" rows="3"
+                                    class="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border border-gray-300 dark:border-gray-600 rounded-md p-3 bg-white dark:bg-gray-700 dark:text-white"><?php echo isset($_POST['root_cause']) ? sanitize($_POST['root_cause']) : ''; ?></textarea>
+                            </div>
+                            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Briefly describe what caused the
+                                issue (if known)</p>
+                        </div>
+
+                        <div class="pt-5">
+                            <div class="flex justify-end">
+                                <a href="index.php"
+                                    class="bg-white dark:bg-gray-700 py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                    Cancel
+                                </a>
+                                <button type="submit"
+                                    class="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                    <i class="fas fa-paper-plane mr-2"></i> Report Incident
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
             </div>
-        </div>
-    </main>
+        </main>
 
 
 
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const dropdownButton = document.getElementById('company-dropdown-button');
-            const dropdown = document.getElementById('company-dropdown');
-            const selectedCompanies = document.getElementById('selected-companies');
-            const companyCheckboxes = document.querySelectorAll('input[name="company_ids[]"]');
-            
-            // Toggle dropdown
-            dropdownButton.addEventListener('click', function() {
-                dropdown.classList.toggle('hidden');
-            });
-            
-            // Close dropdown when clicking outside
-            document.addEventListener('click', function(event) {
-                if (!dropdownButton.contains(event.target) && !dropdown.contains(event.target)) {
-                    dropdown.classList.add('hidden');
-                }
-            });
-            
-            // Handle checkbox changes
-            companyCheckboxes.forEach(checkbox => {
-                checkbox.addEventListener('change', function() {
-                    if (this.value === 'all') {
-                        // When "All" is checked, check all other checkboxes
-                        // When unchecked, uncheck all other checkboxes
-                        const isChecked = this.checked;
-                        companyCheckboxes.forEach(cb => {
-                            if (cb !== this) {
-                                cb.checked = isChecked;
-                            }
-                        });
-                    } else {
-                        // For other checkboxes, uncheck "All" if any is unchecked
-                        // Or check "All" if all others are checked
-                        const allCheckbox = document.querySelector('input[value="all"]');
-                        if (allCheckbox) {
-                            if (!this.checked) {
-                                allCheckbox.checked = false;
-                            } else {
-                                // Check if all other checkboxes are checked
-                                const allChecked = Array.from(companyCheckboxes)
-                                    .filter(cb => cb.value !== 'all')
-                                    .every(cb => cb.checked);
-                                allCheckbox.checked = allChecked;
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                const dropdownButton = document.getElementById('company-dropdown-button');
+                const dropdown = document.getElementById('company-dropdown');
+                const selectedCompanies = document.getElementById('selected-companies');
+                const companyCheckboxes = document.querySelectorAll('input[name="company_ids[]"]');
+
+                // Toggle dropdown
+                dropdownButton.addEventListener('click', function () {
+                    dropdown.classList.toggle('hidden');
+                });
+
+                // Close dropdown when clicking outside
+                document.addEventListener('click', function (event) {
+                    if (!dropdownButton.contains(event.target) && !dropdown.contains(event.target)) {
+                        dropdown.classList.add('hidden');
+                    }
+                });
+
+                // Handle checkbox changes
+                companyCheckboxes.forEach(checkbox => {
+                    checkbox.addEventListener('change', function () {
+                        if (this.value === 'all') {
+                            // When "All" is checked, check all other checkboxes
+                            // When unchecked, uncheck all other checkboxes
+                            const isChecked = this.checked;
+                            companyCheckboxes.forEach(cb => {
+                                if (cb !== this) {
+                                    cb.checked = isChecked;
+                                }
+                            });
+                        } else {
+                            // For other checkboxes, uncheck "All" if any is unchecked
+                            // Or check "All" if all others are checked
+                            const allCheckbox = document.querySelector('input[value="all"]');
+                            if (allCheckbox) {
+                                if (!this.checked) {
+                                    allCheckbox.checked = false;
+                                } else {
+                                    // Check if all other checkboxes are checked
+                                    const allChecked = Array.from(companyCheckboxes)
+                                        .filter(cb => cb.value !== 'all')
+                                        .every(cb => cb.checked);
+                                    allCheckbox.checked = allChecked;
+                                }
                             }
                         }
-                    }
-                    updateSelectedCompanies();
-                });
-            });
-            
-            function updateSelectedCompanies() {
-                const selected = [];
-                const selectedNames = [];
-                
-                document.querySelectorAll('input[name="company_ids[]"]:checked').forEach(checkbox => {
-                    selected.push({
-                        id: checkbox.value,
-                        name: checkbox.nextElementSibling.textContent.trim()
+                        updateSelectedCompanies();
                     });
-                    selectedNames.push(checkbox.nextElementSibling.textContent.trim());
                 });
-                
-                // Update the selected text
-                const selectedText = selectedNames.length > 0 
-                    ? selectedNames.join(', ') 
-                    : 'Select companies...';
-                document.getElementById('company-selected-text').textContent = selectedText;
-                
-                // Update the hidden inputs in the selected-companies container
-                selectedCompanies.innerHTML = selected.map(company => `
+
+                function updateSelectedCompanies() {
+                    const selected = [];
+                    const selectedNames = [];
+
+                    document.querySelectorAll('input[name="company_ids[]"]:checked').forEach(checkbox => {
+                        selected.push({
+                            id: checkbox.value,
+                            name: checkbox.nextElementSibling.textContent.trim()
+                        });
+                        selectedNames.push(checkbox.nextElementSibling.textContent.trim());
+                    });
+
+                    // Update the selected text
+                    const selectedText = selectedNames.length > 0
+                        ? selectedNames.join(', ')
+                        : 'Select companies...';
+                    document.getElementById('company-selected-text').textContent = selectedText;
+
+                    // Update the hidden inputs in the selected-companies container
+                    selectedCompanies.innerHTML = selected.map(company => `
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                         ${company.name}
                         <input type="hidden" name="company_ids[]" value="${company.id}">
                     </span>
                 `).join('');
-            }
-            
-            // Initialize with any pre-selected companies
-            updateSelectedCompanies();
-            
-            // Handle 'All' checkbox - make it exclusive
-            const allCheckbox = document.querySelector('input[value="all"]');
-            const otherCheckboxes = Array.from(companyCheckboxes).filter(cb => cb.value !== 'all');
-            
-            if (allCheckbox) {
-                // When "All" is clicked
-                allCheckbox.addEventListener('change', function() {
-                    if (this.checked) {
-                        // Uncheck all other checkboxes
-                        otherCheckboxes.forEach(checkbox => {
-                            checkbox.checked = false;
-                        });
-                    }
-                    updateSelectedCompanies();
-                });
-                
-                // When any other checkbox is clicked
-                otherCheckboxes.forEach(checkbox => {
-                    checkbox.addEventListener('change', function() {
+                }
+
+                // Initialize with any pre-selected companies
+                updateSelectedCompanies();
+
+                // Handle 'All' checkbox - make it exclusive
+                const allCheckbox = document.querySelector('input[value="all"]');
+                const otherCheckboxes = Array.from(companyCheckboxes).filter(cb => cb.value !== 'all');
+
+                if (allCheckbox) {
+                    // When "All" is clicked
+                    allCheckbox.addEventListener('change', function () {
                         if (this.checked) {
-                            // Uncheck "All"
-                            allCheckbox.checked = false;
+                            // Uncheck all other checkboxes
+                            otherCheckboxes.forEach(checkbox => {
+                                checkbox.checked = false;
+                            });
                         }
                         updateSelectedCompanies();
                     });
-                });
-                
-                // On page load, if "All" is checked, uncheck others
-                if (allCheckbox.checked) {
+
+                    // When any other checkbox is clicked
                     otherCheckboxes.forEach(checkbox => {
-                        checkbox.checked = false;
+                        checkbox.addEventListener('change', function () {
+                            if (this.checked) {
+                                // Uncheck "All"
+                                allCheckbox.checked = false;
+                            }
+                            updateSelectedCompanies();
+                        });
                     });
-                    updateSelectedCompanies();
+
+                    // On page load, if "All" is checked, uncheck others
+                    if (allCheckbox.checked) {
+                        otherCheckboxes.forEach(checkbox => {
+                            checkbox.checked = false;
+                        });
+                        updateSelectedCompanies();
+                    }
                 }
-            }
-            
-            // Service details filtering
-            window.filterDetails = function() {
-                const serviceId = document.getElementById('service_id').value;
-                const componentId = document.getElementById('component_id');
-                const incidentTypeId = document.getElementById('incident_type_id');
-                
-                // Reset and hide all
-                componentId.value = '';
-                incidentTypeId.value = '';
-                
-                document.querySelectorAll('.component-option').forEach(opt => {
-                    if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
-                        opt.classList.remove('hidden');
-                    } else {
-                        opt.classList.add('hidden');
+
+                // Service details filtering
+                window.filterDetails = function () {
+                    const serviceId = document.getElementById('service_id').value;
+                    const componentId = document.getElementById('component_id');
+                    const incidentTypeId = document.getElementById('incident_type_id');
+
+                    // Reset and hide all
+                    componentId.value = '';
+                    incidentTypeId.value = '';
+
+                    document.querySelectorAll('.component-option').forEach(opt => {
+                        if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
+                            opt.classList.remove('hidden');
+                        } else {
+                            opt.classList.add('hidden');
+                        }
+                    });
+
+                    document.querySelectorAll('.type-option').forEach(opt => {
+                        if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
+                            opt.classList.remove('hidden');
+                        } else {
+                            opt.classList.add('hidden');
+                        }
+                    });
+                };
+
+                // Trigger on load if service is pre-selected
+                if (document.getElementById('service_id').value) {
+                    filterDetails();
+                }
+
+                // Incident date/time validation
+                const incidentDate = document.getElementById('incident_date');
+                const incidentTime = document.getElementById('incident_time');
+
+                // Validate date is not in the future
+                incidentDate.addEventListener('change', function () {
+                    const selectedDate = new Date(this.value);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+
+                    if (selectedDate > today) {
+                        alert('Incident date cannot be in the future. Please select today or an earlier date.');
+                        this.value = '<?= date('Y-m-d') ?>';
                     }
                 });
-                
-                document.querySelectorAll('.type-option').forEach(opt => {
-                    if (serviceId === 'all' || opt.dataset.service == serviceId || !opt.dataset.service) {
-                        opt.classList.remove('hidden');
-                    } else {
-                        opt.classList.add('hidden');
+
+                // Validate datetime combination is not in the future
+                function validateDateTime() {
+                    if (!incidentDate.value || !incidentTime.value) return;
+
+                    const selectedDateTime = new Date(incidentDate.value + 'T' + incidentTime.value);
+                    const now = new Date();
+
+                    if (selectedDateTime > now) {
+                        alert('Incident date/time cannot be in the future. The time has been adjusted to the current time.');
+                        incidentTime.value = '<?= date('H:i') ?>';
                     }
-                });
-            };
-            
-            // Trigger on load if service is pre-selected
-            if (document.getElementById('service_id').value) {
-                filterDetails();
-            }
-            
-            // Incident date/time validation
-            const incidentDate = document.getElementById('incident_date');
-            const incidentTime = document.getElementById('incident_time');
-            
-            // Validate date is not in the future
-            incidentDate.addEventListener('change', function() {
-                const selectedDate = new Date(this.value);
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                
-                if (selectedDate > today) {
-                    alert('Incident date cannot be in the future. Please select today or an earlier date.');
-                    this.value = '<?= date('Y-m-d') ?>';
+                }
+
+                incidentTime.addEventListener('change', validateDateTime);
+
+
+                // ========== TEMPLATE SELECTOR FUNCTIONALITY ==========
+                let cachedTemplates = [];
+                const serviceSelect = document.getElementById('service_id');
+                const templateContainer = document.getElementById('templateSelectorContainer');
+                const templateSelect = document.getElementById('template_select');
+
+                // Load templates when service changes
+                if (serviceSelect) {
+                    serviceSelect.addEventListener('change', function () {
+                        const serviceId = this.value;
+                        loadTemplates(serviceId);
+                    });
+                }
+
+                function loadTemplates(serviceId) {
+                    // Hide if no service or "all services" selected
+                    if (!serviceId || serviceId === '' || serviceId === 'all') {
+                        templateContainer.style.display = 'none';
+                        templateSelect.value = '';
+                        cachedTemplates = [];
+                        return;
+                    }
+
+                    // Fetch templates from API
+                    fetch(`<?= url('api/get_templates.php') ?>?service_id=${serviceId}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success && data.templates && data.templates.length > 0) {
+                                cachedTemplates = data.templates;
+
+                                // Populate dropdown
+                                templateSelect.innerHTML = '<option value="">Choose a template to auto-fill...</option>';
+                                data.templates.forEach(template => {
+                                    const option = document.createElement('option');
+                                    option.value = template.template_id;
+                                    option.textContent = template.template_name;
+                                    option.dataset.impactLevel = template.impact_level || '';
+                                    templateSelect.appendChild(option);
+                                });
+
+                                // Show container
+                                templateContainer.style.display = 'block';
+                            } else {
+                                // No templates available
+                                templateContainer.style.display = 'none';
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error loading templates:', error);
+                            templateContainer.style.display = 'none';
+                        });
+                }
+
+                // Apply template when selected
+                if (templateSelect) {
+                    templateSelect.addEventListener('change', function () {
+                        const templateId = parseInt(this.value);
+                        if (!templateId) return;
+
+                        const template = cachedTemplates.find(t => t.template_id === templateId);
+                        if (!template) return;
+
+                        // Pre-fill component if specified
+                        if (template.component_id) {
+                            const componentDropdown = document.getElementById('component_id');
+                            if (componentDropdown) {
+                                // Ensure the target option is visible (options are hidden/shown by service filter)
+                                const targetOption = componentDropdown.querySelector(`option[value="${template.component_id}"]`);
+                                if (targetOption) {
+                                    targetOption.classList.remove('hidden');
+                                }
+                                componentDropdown.value = template.component_id;
+                            }
+                        }
+
+                        // Pre-fill impact level if specified
+                        if (template.impact_level) {
+                            const impactDropdown = document.getElementById('impact_level');
+                            if (impactDropdown) {
+                                // Capitalize first letter to match form values (Low, Medium, High, Critical)
+                                const capitalizedImpact = template.impact_level.charAt(0).toUpperCase() + template.impact_level.slice(1).toLowerCase();
+                                impactDropdown.value = capitalizedImpact;
+                            }
+                        }
+
+                        // Pre-fill incident type if specified
+                        if (template.incident_type_id) {
+                            const typeDropdown = document.getElementById('incident_type_id');
+                            if (typeDropdown) {
+                                // Ensure the target option is visible
+                                const targetOption = typeDropdown.querySelector(`option[value="${template.incident_type_id}"]`);
+                                if (targetOption) {
+                                    targetOption.classList.remove('hidden');
+                                }
+                                typeDropdown.value = template.incident_type_id;
+                            }
+                        }
+
+                        // Pre-fill description if specified
+                        if (template.description) {
+                            const descTextarea = document.getElementById('description');
+                            if (descTextarea) {
+                                descTextarea.value = template.description;
+                            }
+                        }
+
+                        // Pre-fill root cause if specified
+                        if (template.root_cause) {
+                            const rootCauseTextarea = document.getElementById('root_cause');
+                            if (rootCauseTextarea) {
+                                rootCauseTextarea.value = template.root_cause;
+                            }
+                        }
+
+                        // Track template usage
+                        fetch('<?= url('api/use_template.php') ?>', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ template_id: templateId })
+                        }).catch(error => console.error('Error tracking template usage:', error));
+
+                        // Visual feedback
+                        this.classList.add('border-green-500', 'bg-green-50', 'dark:bg-green-900/20');
+                        setTimeout(() => {
+                            this.classList.remove('border-green-500', 'bg-green-50', 'dark:bg-green-900/20');
+                        }, 2000);
+
+                        // Show success message
+                        const infoText = templateContainer.querySelector('p span');
+                        const originalText = infoText.textContent;
+                        infoText.innerHTML = '<strong class="text-green-600 dark:text-green-400">✓ Template applied! You can still modify any fields before submitting.</strong>';
+                        setTimeout(() => {
+                            infoText.textContent = originalText;
+                        }, 5000);
+                    });
                 }
             });
-            
-            // Validate datetime combination is not in the future
-            function validateDateTime() {
-                if (!incidentDate.value || !incidentTime.value) return;
-                
-                const selectedDateTime = new Date(incidentDate.value + 'T' + incidentTime.value);
-                const now = new Date();
-                
-                if (selectedDateTime > now) {
-                    alert('Incident date/time cannot be in the future. The time has been adjusted to the current time.');
-                    incidentTime.value = '<?= date('H:i') ?>';
-                }
-            }
-            
-            incidentTime.addEventListener('change', validateDateTime);
-
-
-            // ========== TEMPLATE SELECTOR FUNCTIONALITY ==========
-            let cachedTemplates = [];
-            const serviceSelect = document.getElementById('service_id');
-            const templateContainer = document.getElementById('templateSelectorContainer');
-            const templateSelect = document.getElementById('template_select');
-            
-            // Load templates when service changes
-            if (serviceSelect) {
-                serviceSelect.addEventListener('change', function() {
-                    const serviceId = this.value;
-                    loadTemplates(serviceId);
-                });
-            }
-            
-            function loadTemplates(serviceId) {
-                // Hide if no service or "all services" selected
-                if (!serviceId || serviceId === '' || serviceId === 'all') {
-                    templateContainer.style.display = 'none';
-                    templateSelect.value = '';
-                    cachedTemplates = [];
-                    return;
-                }
-                
-                // Fetch templates from API
-                fetch(`<?= url('api/get_templates.php') ?>?service_id=${serviceId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success && data.templates && data.templates.length > 0) {
-                            cachedTemplates = data.templates;
-                            
-                            // Populate dropdown
-                            templateSelect.innerHTML = '<option value="">Choose a template to auto-fill...</option>';
-                            data.templates.forEach(template => {
-                                const option = document.createElement('option');
-                                option.value = template.template_id;
-                                option.textContent = template.template_name;
-                                option.dataset.impactLevel = template.impact_level || '';
-                                templateSelect.appendChild(option);
-                            });
-                            
-                            // Show container
-                            templateContainer.style.display = 'block';
-                        } else {
-                            // No templates available
-                            templateContainer.style.display = 'none';
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error loading templates:', error);
-                        templateContainer.style.display = 'none';
-                    });
-            }
-            
-            // Apply template when selected
-            if (templateSelect) {
-                templateSelect.addEventListener('change', function() {
-                    const templateId = parseInt(this.value);
-                    if (!templateId) return;
-                    
-                    const template = cachedTemplates.find(t => t.template_id === templateId);
-                    if (!template) return;
-                    
-                    // Pre-fill component if specified
-                    if (template.component_id) {
-                        const componentDropdown = document.getElementById('component_id');
-                        if (componentDropdown) {
-                            componentDropdown.value = template.component_id;
-                        }
-                    }
-                    
-                    // Pre-fill impact level if specified
-                    if (template.impact_level) {
-                        const impactDropdown = document.getElementById('impact_level');
-                        if (impactDropdown) {
-                            // Capitalize first letter to match form values (Low, Medium, High, Critical)
-                            const capitalizedImpact = template.impact_level.charAt(0).toUpperCase() + template.impact_level.slice(1).toLowerCase();
-                            impactDropdown.value = capitalizedImpact;
-                        }
-                    }
-                    
-                    // Pre-fill description if specified
-                    if (template.description) {
-                        const descTextarea = document.getElementById('description');
-                        if (descTextarea) {
-                            descTextarea.value = template.description;
-                        }
-                    }
-                    
-                    // Pre-fill root cause if specified
-                    if (template.root_cause) {
-                        const rootCauseTextarea = document.getElementById('root_cause');
-                        if (rootCauseTextarea) {
-                            rootCauseTextarea.value = template.root_cause;
-                        }
-                    }
-                    
-                    // Track template usage
-                    fetch('<?= url('api/use_template.php') ?>', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({template_id: templateId})
-                    }).catch(error => console.error('Error tracking template usage:', error));
-                    
-                    // Visual feedback
-                    this.classList.add('border-green-500', 'bg-green-50', 'dark:bg-green-900/20');
-                    setTimeout(() => {
-                        this.classList.remove('border-green-500', 'bg-green-50', 'dark:bg-green-900/20');
-                    }, 2000);
-                    
-                    // Show success message
-                    const infoText = templateContainer.querySelector('p span');
-                    const originalText = infoText.textContent;
-                    infoText.innerHTML = '<strong class="text-green-600 dark:text-green-400">✓ Template applied! You can still modify any fields before submitting.</strong>';
-                    setTimeout(() => {
-                        infoText.textContent = originalText;
-                    }, 5000);
-                });
-            }
-        });
-    </script>
+        </script>
     </div> <!-- End Content Wrapper -->
 </body>
+
 </html>

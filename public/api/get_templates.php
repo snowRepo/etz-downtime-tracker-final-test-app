@@ -14,7 +14,7 @@ header('Content-Type: application/json');
 
 try {
     $serviceId = $_GET['service_id'] ?? null;
-    
+
     // Build query based on service filter
     if ($serviceId && $serviceId !== '') {
         // Get templates specific to this service OR generic templates (service_id IS NULL)
@@ -24,6 +24,7 @@ try {
                 template_name,
                 service_id,
                 component_id,
+                incident_type_id,
                 impact_level,
                 description,
                 root_cause
@@ -41,6 +42,7 @@ try {
                 template_name,
                 service_id,
                 component_id,
+                incident_type_id,
                 impact_level,
                 description,
                 root_cause
@@ -50,14 +52,14 @@ try {
         ");
         $stmt->execute();
     }
-    
+
     $templates = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
     echo json_encode([
         'success' => true,
         'templates' => $templates
     ]);
-    
+
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([

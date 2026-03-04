@@ -11,14 +11,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $email = trim($_POST['email'] ?? '');
     $full_name = trim($_POST['full_name'] ?? '');
+    $mobile_number = trim($_POST['mobile_number'] ?? '') ?: null;
     $password = $_POST['password'] ?? '';
     $confirm_password = $_POST['confirm_password'] ?? '';
     $role = $_POST['role'] ?? 'user';
     $is_active = isset($_POST['is_active']) ? 1 : 0;
-    
+
     // Default password if not provided
     $defaultPassword = 'Etz@1234566';
-    
+
     // Use default password if no password is provided
     if (empty($password)) {
         $password = $defaultPassword;
@@ -62,10 +63,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $password_hash = password_hash($password, PASSWORD_DEFAULT);
             $changed_password = ($role === 'admin') ? 1 : 0;
             $stmt = $pdo->prepare("
-                INSERT INTO users (username, email, password_hash, full_name, role, is_active, changed_password)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO users (username, email, password_hash, full_name, mobile_number, role, is_active, changed_password)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ");
-            $stmt->execute([$username, $email, $password_hash, $full_name, $role, $is_active, $changed_password]);
+            $stmt->execute([$username, $email, $password_hash, $full_name, $mobile_number, $role, $is_active, $changed_password]);
 
             $newUserId = $pdo->lastInsertId();
 
@@ -117,128 +118,141 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <!-- Content Wrapper -->
     <div class="relative z-10" x-data="{ showPassword: false, showConfirmPassword: false }">
-    <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
-    <?php include __DIR__ . '/../../src/includes/loading.php'; ?>
+        <?php include __DIR__ . '/../../src/includes/admin_navbar.php'; ?>
+        <?php include __DIR__ . '/../../src/includes/loading.php'; ?>
 
-    <main class="py-8">
-        <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="mb-6">
-                <a href="users.php" class="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400">
-                    <i class="fas fa-arrow-left mr-2"></i>Back to Users
-                </a>
-            </div>
-
-            <div
-                class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
-                <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700">
-                    <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Create New User</h2>
-                    <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Add a new user to the system</p>
+        <main class="py-8">
+            <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="mb-6">
+                    <a href="users.php" class="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                        <i class="fas fa-arrow-left mr-2"></i>Back to Users
+                    </a>
                 </div>
 
-                <?php if ($errors): ?>
-                    <div class="mx-6 mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                        <ul class="list-disc list-inside text-sm text-red-800">
-                            <?php foreach ($errors as $error): ?>
-                                <li><?= htmlspecialchars($error) ?></li>
-                            <?php endforeach; ?>
-                        </ul>
+                <div
+                    class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+                    <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700">
+                        <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Create New User</h2>
+                        <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Add a new user to the system</p>
                     </div>
-                <?php endif; ?>
 
-                <form method="POST" class="px-6 py-6 space-y-6">
-                    <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Username
-                                *</label>
-                            <input type="text" name="username" value="<?= htmlspecialchars($_POST['username'] ?? '') ?>"
-                                required
-                                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <?php if ($errors): ?>
+                        <div class="mx-6 mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                            <ul class="list-disc list-inside text-sm text-red-800">
+                                <?php foreach ($errors as $error): ?>
+                                    <li><?= htmlspecialchars($error) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
                         </div>
+                    <?php endif; ?>
 
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email
-                                *</label>
-                            <input type="email" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
-                                required
-                                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Full Name
-                            *</label>
-                        <input type="text" name="full_name" value="<?= htmlspecialchars($_POST['full_name'] ?? '') ?>"
-                            required
-                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                    </div>
-
-                    <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password
-                                (Optional)</label>
-                            <div class="relative">
-                                <input :type="showPassword ? 'text' : 'password'" name="password"
-                                    placeholder="Leave blank for default"
-                                    class="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                                <button type="button" @click="showPassword = !showPassword"
-                                    class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
-                                    <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
-                                </button>
+                    <form method="POST" class="px-6 py-6 space-y-6">
+                        <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Username
+                                    *</label>
+                                <input type="text" name="username"
+                                    value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                             </div>
-                            <p class="mt-1 text-xs text-gray-500">Default: <span class="font-mono font-semibold">Etz@1234566</span></p>
-                        </div>
 
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Confirm
-                                Password (Optional)</label>
-                            <div class="relative">
-                                <input :type="showConfirmPassword ? 'text' : 'password'" name="confirm_password"
-                                    placeholder="Leave blank for default"
-                                    class="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                                <button type="button" @click="showConfirmPassword = !showConfirmPassword"
-                                    class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
-                                    <i :class="showConfirmPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
-                                </button>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email
+                                    *</label>
+                                <input type="email" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
+                                    required
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                             </div>
-                            <p class="mt-1 text-xs text-gray-500">User must change on first login</p>
                         </div>
-                    </div>
 
-                    <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Role
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Full Name
                                 *</label>
-                            <select name="role"
+                            <input type="text" name="full_name"
+                                value="<?= htmlspecialchars($_POST['full_name'] ?? '') ?>" required
                                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                                <option value="user" selected>User</option>
-                                <option value="admin">Admin</option>
-                            </select>
                         </div>
 
-                        <div class="flex items-center pt-8">
-                            <input type="checkbox" name="is_active" id="is_active" checked
-                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
-                            <label for="is_active" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">
-                                Active Account
-                            </label>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Mobile Number
+                                <span
+                                    class="text-xs text-gray-500 dark:text-gray-400 font-normal ml-1">(Optional)</span></label>
+                            <input type="tel" name="mobile_number"
+                                value="<?= htmlspecialchars($_POST['mobile_number'] ?? '') ?>"
+                                placeholder="e.g. 08012345678"
+                                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                            <p class="mt-1 text-xs text-gray-500">Used to contact the reporter when they log incidents
+                            </p>
                         </div>
-                    </div>
 
-                    <div
-                        class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-6 border-t border-gray-200 dark:border-gray-700">
-                        <a href="users.php"
-                            class="inline-flex items-center justify-center px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                            Cancel
-                        </a>
-                        <button type="submit"
-                            class="inline-flex items-center justify-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
-                            <i class="fas fa-save mr-2"></i>Create User
-                        </button>
-                    </div>
-                </form>
+                        <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Password
+                                    (Optional)</label>
+                                <div class="relative">
+                                    <input :type="showPassword ? 'text' : 'password'" name="password"
+                                        placeholder="Leave blank for default"
+                                        class="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                                    <button type="button" @click="showPassword = !showPassword"
+                                        class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
+                                        <i :class="showPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                                    </button>
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">Default: <span
+                                        class="font-mono font-semibold">Etz@1234566</span></p>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Confirm
+                                    Password (Optional)</label>
+                                <div class="relative">
+                                    <input :type="showConfirmPassword ? 'text' : 'password'" name="confirm_password"
+                                        placeholder="Leave blank for default"
+                                        class="w-full px-4 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                                    <button type="button" @click="showConfirmPassword = !showConfirmPassword"
+                                        class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
+                                        <i :class="showConfirmPassword ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                                    </button>
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">User must change on first login</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Role
+                                    *</label>
+                                <select name="role"
+                                    class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                                    <option value="user" selected>User</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                            </div>
+
+                            <div class="flex items-center pt-8">
+                                <input type="checkbox" name="is_active" id="is_active" checked
+                                    class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                                <label for="is_active" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+                                    Active Account
+                                </label>
+                            </div>
+                        </div>
+
+                        <div
+                            class="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-6 border-t border-gray-200 dark:border-gray-700">
+                            <a href="users.php"
+                                class="inline-flex items-center justify-center px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                                Cancel
+                            </a>
+                            <button type="submit"
+                                class="inline-flex items-center justify-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+                                <i class="fas fa-save mr-2"></i>Create User
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
-        </div>
-    </main>
+        </main>
     </div> <!-- End Content Wrapper -->
 </body>
 

@@ -154,6 +154,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         $stmt->execute($params);
 
+        if ($status === 'resolved') {
+            // Process involved officers
+            $pdo->prepare("DELETE FROM incident_officers WHERE incident_id = ?")->execute([$incidentId]);
+
+            if (isset($_POST['involved_users']) && is_array($_POST['involved_users'])) {
+                $officerStmt = $pdo->prepare("INSERT INTO incident_officers (incident_id, user_id) VALUES (?, ?)");
+                foreach ($_POST['involved_users'] as $userId) {
+                    if (!empty($userId)) {
+                        $officerStmt->execute([$incidentId, $userId]);
+                    }
+                }
+            }
+
+            if (!empty($_POST['external_names'])) {
+                $names = array_map('trim', explode(',', $_POST['external_names']));
+                $officerStmt = $pdo->prepare("INSERT INTO incident_officers (incident_id, external_name) VALUES (?, ?)");
+                foreach ($names as $name) {
+                    if (!empty($name)) {
+                        $officerStmt->execute([$incidentId, $name]);
+                    }
+                }
+            }
+        }
+
         // Add system update with appropriate message
         // Detect if incident is being reopened (changing from resolved to pending)
         $isReopening = ($currentStatus === 'resolved' && $status === 'pending');
@@ -179,6 +203,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         $_SESSION['success'] = "Incident updated successfully!";
     } elseif ($_POST['action'] === 'edit_incident' && isset($_POST['incident_id'])) {
+        // Enforce admin-only editing
+        if (!hasRole('admin')) {
+            $_SESSION['error'] = "You do not have permission to edit incidents.";
+            header('Location: ' . $_SERVER['PHP_SELF']);
+            exit;
+        }
+
         // Handle incident editing
         $incidentId = intval($_POST['incident_id']);
         $serviceId = intval($_POST['service_id']);
@@ -198,19 +229,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $pdo->beginTransaction();
 
                 // Update incident
-                $stmt = $pdo->prepare("
-                    UPDATE incidents 
-                    SET service_id = :service_id,
-                        component_id = :component_id,
-                        incident_type_id = :incident_type_id,
-                        impact_level = :impact_level,
-                        priority = :priority,
-                        actual_start_time = :actual_start_time,
-                        description = :description,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE incident_id = :incident_id
-                ");
-                $stmt->execute([
+                // Prepare fields for update
+                $updateFields = [
+                    'service_id = :service_id',
+                    'component_id = :component_id',
+                    'incident_type_id = :incident_type_id',
+                    'impact_level = :impact_level',
+                    'priority = :priority',
+                    'actual_start_time = :actual_start_time',
+                    'description = :description',
+                    'updated_at = CURRENT_TIMESTAMP'
+                ];
+                $params = [
                     ':service_id' => $serviceId,
                     ':component_id' => $componentId,
                     ':incident_type_id' => $incidentTypeId,
@@ -219,7 +249,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     ':actual_start_time' => $actualStartTime,
                     ':description' => $description,
                     ':incident_id' => $incidentId
-                ]);
+                ];
+
+                if (isset($_POST['resolved_at']) && $_POST['resolved_at'] !== '') {
+                    $updateFields[] = 'resolved_at = :resolved_at';
+                    $params[':resolved_at'] = $_POST['resolved_at'];
+                }
+
+                // Update incident
+                $stmt = $pdo->prepare("UPDATE incidents SET " . implode(', ', $updateFields) . " WHERE incident_id = :incident_id");
+                $stmt->execute($params);
 
                 // Update affected companies with audit trail
                 // First, get existing companies to track changes
@@ -359,7 +398,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                                     ':file_type' => $fileType,
                                     ':file_size' => $fileSize
                                 ]);
+
                             }
+                        }
+                    }
+                }
+
+                // Process involved officers
+                $pdo->prepare("DELETE FROM incident_officers WHERE incident_id = ?")->execute([$incidentId]);
+
+                if (isset($_POST['involved_users']) && is_array($_POST['involved_users'])) {
+                    $officerStmt = $pdo->prepare("INSERT INTO incident_officers (incident_id, user_id) VALUES (?, ?)");
+                    foreach ($_POST['involved_users'] as $userId) {
+                        if (!empty($userId)) {
+                            $officerStmt->execute([$incidentId, $userId]);
+                        }
+                    }
+                }
+
+                if (!empty($_POST['external_names'])) {
+                    $names = array_map('trim', explode(',', $_POST['external_names']));
+                    $officerStmt = $pdo->prepare("INSERT INTO incident_officers (incident_id, external_name) VALUES (?, ?)");
+                    foreach ($names as $name) {
+                        if (!empty($name)) {
+                            $officerStmt->execute([$incidentId, $name]);
                         }
                     }
                 }
@@ -397,11 +459,48 @@ $itemsPerPage = 10;
 $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
 $offset = ($currentPage - 1) * $itemsPerPage;
 
+// --- Filters from GET ---
+$filterStatus = in_array($_GET['status'] ?? '', ['pending', 'resolved']) ? $_GET['status'] : '';
+$filterDateFrom = !empty($_GET['date_from']) ? $_GET['date_from'] : '';
+$filterDateTo = !empty($_GET['date_to']) ? $_GET['date_to'] : '';
+
+// Build a helper string to carry all active filter params through pagination/status links
+function buildFilterQuery(array $overrides = []): string
+{
+    global $filterStatus, $filterDateFrom, $filterDateTo;
+    $params = array_filter(array_merge([
+        'status' => $filterStatus,
+        'date_from' => $filterDateFrom,
+        'date_to' => $filterDateTo,
+    ], $overrides), fn($v) => $v !== '');
+    return $params ? '&' . http_build_query($params) : '';
+}
+
 // Get all incidents with their updates
 try {
-    // First, count total incidents for pagination
-    $countQuery = "SELECT COUNT(*) FROM incidents";
-    $totalIncidents = $pdo->query($countQuery)->fetchColumn();
+    // Build WHERE clauses
+    $whereClauses = [];
+    $whereParams = [];
+
+    if ($filterStatus !== '') {
+        $whereClauses[] = 'i.status = ?';
+        $whereParams[] = $filterStatus;
+    }
+    if ($filterDateFrom !== '') {
+        $whereClauses[] = 'DATE(i.actual_start_time) >= ?';
+        $whereParams[] = $filterDateFrom;
+    }
+    if ($filterDateTo !== '') {
+        $whereClauses[] = 'DATE(i.actual_start_time) <= ?';
+        $whereParams[] = $filterDateTo;
+    }
+
+    $whereSQL = $whereClauses ? 'WHERE ' . implode(' AND ', $whereClauses) : '';
+
+    // Count filtered incidents for pagination
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM incidents i $whereSQL");
+    $countStmt->execute($whereParams);
+    $totalIncidents = $countStmt->fetchColumn();
     $totalPages = ceil($totalIncidents / $itemsPerPage);
 
     // Get incidents with service and affected companies (with pagination)
@@ -409,6 +508,7 @@ try {
         SELECT 
             i.incident_id,
             i.service_id,
+            i.description,
             i.root_cause,
             i.status,
             i.impact_level,
@@ -416,6 +516,7 @@ try {
             i.attachment_path,
             u.full_name as user_name,
             i.created_at,
+            i.actual_start_time,
             res.full_name as resolved_by,
             i.resolved_at,
             i.updated_at,
@@ -441,13 +542,14 @@ try {
         LEFT JOIN companies c ON iac.company_id = c.company_id
         LEFT JOIN service_components sc ON i.component_id = sc.component_id
         LEFT JOIN incident_types it ON i.incident_type_id = it.type_id
+        $whereSQL
         GROUP BY i.incident_id
         ORDER BY 
             FIELD(i.status, 'pending', 'resolved'),
             i.updated_at DESC
         LIMIT ? OFFSET ?
     ");
-    $incidents->execute([$itemsPerPage, $offset]);
+    $incidents->execute(array_merge($whereParams, [$itemsPerPage, $offset]));
     $incidents = $incidents->fetchAll(PDO::FETCH_ASSOC);
 
     // Get updates for each incident
@@ -459,6 +561,26 @@ try {
         ");
         $stmt->execute([$incident['incident_id']]);
         $incident['updates'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Fetch involved officers
+        $officersStmt = $pdo->prepare("
+            SELECT io.external_name, u.full_name as user_name 
+            FROM incident_officers io
+            LEFT JOIN users u ON io.user_id = u.user_id
+            WHERE io.incident_id = ?
+        ");
+        $officersStmt->execute([$incident['incident_id']]);
+        $officers = $officersStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $involvedNames = [];
+        foreach ($officers as $officer) {
+            if ($officer['user_name']) {
+                $involvedNames[] = $officer['user_name'];
+            } elseif ($officer['external_name']) {
+                $involvedNames[] = $officer['external_name'];
+            }
+        }
+        $incident['involved_officers_list'] = implode(', ', $involvedNames);
     }
     unset($incident); // Break the reference
 
@@ -467,6 +589,7 @@ try {
     $components = $pdo->query("SELECT component_id, name, service_id FROM service_components ORDER BY name")->fetchAll();
     $incidentTypes = $pdo->query("SELECT type_id, name FROM incident_types ORDER BY name")->fetchAll();
     $companies = $pdo->query("SELECT company_id, company_name FROM companies ORDER BY company_name")->fetchAll();
+    $activeUsers = $pdo->query("SELECT user_id, full_name FROM users WHERE is_active = TRUE ORDER BY full_name")->fetchAll();
 
 } catch (PDOException $e) {
     die("ERROR: Could not fetch incidents. " . $e->getMessage());
@@ -597,51 +720,99 @@ try {
                     </div>
                 </div>
 
-                <!-- Search and Filter Bar -->
-                <div class="mb-6 flex flex-col sm:flex-row gap-4">
+                <!-- Search and Filter Bar: single compact row -->
+                <div class="mb-4 flex flex-col lg:flex-row lg:items-end gap-3">
+
+                    <!-- Search (left, grows) -->
                     <div class="flex-1">
                         <div class="relative">
                             <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor"
+                                <svg class="h-4 w-4 text-gray-400" fill="none" stroke="currentColor"
                                     viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                         d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                                 </svg>
                             </div>
-                            <input type="text" id="incident-search"
-                                placeholder="Search incidents by service, company, or root cause..."
-                                class="block w-full pl-10 pr-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent sm:text-sm"
+                            <input type="text" id="incident-search" placeholder="Search incidents..."
+                                class="block w-full pl-9 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                                 onkeyup="filterIncidents()">
                         </div>
                     </div>
-                    <div class="mt-4 flex md:mt-0 md:ml-6">
+
+                    <!-- Right controls: date range + status (compact, right-aligned) -->
+                    <div class="flex flex-col items-end gap-2">
+
+                        <!-- Compact date range form -->
+                        <form method="GET" action="incidents.php" class="flex items-center gap-1.5">
+                            <?php if ($filterStatus): ?>
+                                <input type="hidden" name="status" value="<?= htmlspecialchars($filterStatus) ?>">
+                            <?php endif; ?>
+                            <input type="date" name="date_from" value="<?= htmlspecialchars($filterDateFrom) ?>"
+                                max="<?= date('Y-m-d') ?>" title="From date"
+                                class="border border-gray-300 dark:border-gray-600 rounded-lg py-2 px-2 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-32">
+                            <span class="text-gray-400 text-xs select-none">&ndash;</span>
+                            <input type="date" name="date_to" value="<?= htmlspecialchars($filterDateTo) ?>"
+                                max="<?= date('Y-m-d') ?>" title="To date"
+                                class="border border-gray-300 dark:border-gray-600 rounded-lg py-2 px-2 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-32">
+                            <button type="submit"
+                                class="inline-flex items-center px-2.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors"
+                                title="Apply date filter">
+                                <i class="fas fa-filter"></i>
+                            </button>
+                            <?php if ($filterDateFrom || $filterDateTo): ?>
+                                <a href="incidents.php<?= $filterStatus ? '?status=' . urlencode($filterStatus) : '' ?>"
+                                    class="inline-flex items-center px-2.5 py-2 border border-gray-300 dark:border-gray-600 text-xs rounded-lg text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                                    title="Clear date filter">
+                                    <i class="fas fa-times"></i>
+                                </a>
+                            <?php endif; ?>
+                        </form>
+
+                        <!-- Status pill links -->
+                        <?php
+                        $baseUrl = 'incidents.php?' . http_build_query(array_filter([
+                            'date_from' => $filterDateFrom,
+                            'date_to' => $filterDateTo,
+                        ]));
+                        $sep = ($filterDateFrom || $filterDateTo) ? '&' : '?';
+                        $pillBase = 'inline-flex items-center px-3 py-2 text-xs font-medium border transition-colors focus:outline-none';
+                        $activeAll = ($filterStatus === '') ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600';
+                        $activePending = ($filterStatus === 'pending') ? 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-700' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:bg-yellow-50 dark:hover:bg-gray-600';
+                        $activeResolved = ($filterStatus === 'resolved') ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-300 dark:border-green-700' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:bg-green-50 dark:hover:bg-gray-600';
+                        ?>
                         <div class="inline-flex rounded-lg shadow-sm" role="group">
-                            <button type="button" data-status="all"
-                                class="status-toggle px-4 py-2 text-sm font-medium rounded-l-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500">
-                                <span class="flex items-center">
-                                    <i class="fas fa-list-ul mr-2 text-gray-500"></i>
-                                    <span>All</span>
-                                </span>
-                            </button>
-                            <button type="button" data-status="pending"
-                                class="status-toggle px-4 py-2 text-sm font-medium border-t border-b border-gray-200 bg-white text-gray-700 hover:bg-yellow-50 transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-yellow-500">
-                                <span class="flex items-center">
-                                    <i class="fas fa-clock mr-2 text-yellow-500"></i>
-                                    <span>Pending</span>
-                                </span>
-                            </button>
-                            <button type="button" data-status="resolved"
-                                class="status-toggle px-4 py-2 text-sm font-medium rounded-r-lg border border-gray-200 bg-white text-gray-700 hover:bg-green-50 transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-green-500">
-                                <span class="flex items-center">
-                                    <i class="fas fa-check-circle mr-2 text-green-500"></i>
-                                    <span>Resolved</span>
-                                </span>
-                            </button>
+                            <a href="<?= $baseUrl ?>" class="<?= $pillBase ?> rounded-l-lg <?= $activeAll ?>">
+                                <i
+                                    class="fas fa-list-ul mr-1.5 <?= $filterStatus === '' ? 'text-blue-500' : 'text-gray-400' ?>"></i>All
+                            </a>
+                            <a href="<?= $baseUrl . $sep ?>status=pending"
+                                class="<?= $pillBase ?> border-l-0 border-r-0 <?= $activePending ?>">
+                                <i class="fas fa-clock mr-1.5 text-yellow-500"></i>Pending
+                            </a>
+                            <a href="<?= $baseUrl . $sep ?>status=resolved"
+                                class="<?= $pillBase ?> rounded-r-lg <?= $activeResolved ?>">
+                                <i class="fas fa-check-circle mr-1.5 text-green-500"></i>Resolved
+                            </a>
                         </div>
                     </div>
                 </div>
 
-                <!-- Incidents List -->
+                <!-- Active filter summary (small, muted) -->
+                <?php if ($filterDateFrom || $filterDateTo || $filterStatus): ?>
+                    <p class="text-xs text-gray-400 dark:text-gray-500 -mt-2 mb-4">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        <?= $totalIncidents ?> result<?= $totalIncidents !== 1 ? 's' : '' ?>
+                        <?php if ($filterDateFrom || $filterDateTo): ?>
+                            &middot; <?= $filterDateFrom ? date('M j, Y', strtotime($filterDateFrom)) : 'start' ?>
+                            &ndash; <?= $filterDateTo ? date('M j, Y', strtotime($filterDateTo)) : 'today' ?>
+                        <?php endif; ?>
+                        <?php if ($filterStatus): ?>
+                            &middot; <span class="capitalize"><?= htmlspecialchars($filterStatus) ?></span> only
+                        <?php endif; ?>
+                    </p>
+                <?php endif; ?>
+
+                <!--  Incidents List -->
                 <div class="space-y-4">
                     <!-- Empty State for No Results -->
                     <div id="no-results" class="hidden text-center py-12">
@@ -744,7 +915,7 @@ try {
                                                         class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                                                         Component Affected
                                                     </h4>
-                                                    <?php if ($incident['status'] === 'pending'): ?>
+                                                    <?php if (hasRole('admin')): ?>
                                                         <button type="button"
                                                             onclick="showEditModal(<?php echo $incident['incident_id']; ?>)"
                                                             class="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 focus:outline-none">
@@ -812,6 +983,18 @@ try {
                                                         Lessons Learned</h4>
                                                     <p class="mt-1 text-sm text-gray-900 dark:text-white">
                                                         <?php echo nl2br(htmlspecialchars($incident['lessons_learned'])); ?>
+                                                    </p>
+                                                </div>
+                                            <?php endif; ?>
+
+                                            <!-- Involved Officers (only show for resolved incidents) -->
+                                            <?php if ($incident['status'] === 'resolved' && !empty($incident['involved_officers_list'])): ?>
+                                                <div>
+                                                    <h4
+                                                        class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                                                        Involved Officers</h4>
+                                                    <p class="mt-1 text-sm text-gray-900 dark:text-white">
+                                                        <?php echo htmlspecialchars($incident['involved_officers_list']); ?>
                                                     </p>
                                                 </div>
                                             <?php endif; ?>
@@ -980,12 +1163,26 @@ try {
 
                 <!-- Pagination -->
                 <?php if ($totalPages > 1): ?>
+                    <?php
+                    // Build page link with all active filters preserved
+                    function pageLink(int $p): string
+                    {
+                        global $filterStatus, $filterDateFrom, $filterDateTo;
+                        $q = array_filter([
+                            'page' => $p,
+                            'status' => $filterStatus,
+                            'date_from' => $filterDateFrom,
+                            'date_to' => $filterDateTo,
+                        ], fn($v) => $v !== '' && $v !== null);
+                        return 'incidents.php?' . http_build_query($q);
+                    }
+                    ?>
                     <div
                         class="mt-8 flex items-center justify-between border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 py-3 sm:px-6 rounded-lg shadow">
                         <div class="flex flex-1 justify-between sm:hidden">
                             <!-- Mobile Pagination -->
                             <?php if ($currentPage > 1): ?>
-                                <a href="?page=<?= $currentPage - 1 ?>"
+                                <a href="<?= pageLink($currentPage - 1) ?>"
                                     class="relative inline-flex items-center rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600">
                                     Previous
                                 </a>
@@ -1001,7 +1198,7 @@ try {
                             </span>
 
                             <?php if ($currentPage < $totalPages): ?>
-                                <a href="?page=<?= $currentPage + 1 ?>"
+                                <a href="<?= pageLink($currentPage + 1) ?>"
                                     class="relative ml-3 inline-flex items-center rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600">
                                     Next
                                 </a>
@@ -1029,7 +1226,7 @@ try {
                                 <nav class="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
                                     <!-- Previous Button -->
                                     <?php if ($currentPage > 1): ?>
-                                        <a href="?page=<?= $currentPage - 1 ?>"
+                                        <a href="<?= pageLink($currentPage - 1) ?>"
                                             class="relative inline-flex items-center rounded-l-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 focus:z-20 focus:outline-offset-0">
                                             <span class="sr-only">Previous</span>
                                             <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -1056,7 +1253,7 @@ try {
                                     $endPage = min($totalPages, $currentPage + 2);
 
                                     if ($startPage > 1): ?>
-                                        <a href="?page=1"
+                                        <a href="<?= pageLink(1) ?>"
                                             class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-gray-900 dark:text-gray-300 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 focus:z-20 focus:outline-offset-0">1</a>
                                         <?php if ($startPage > 2): ?>
                                             <span
@@ -1069,7 +1266,7 @@ try {
                                             <span
                                                 class="relative z-10 inline-flex items-center bg-blue-600 px-4 py-2 text-sm font-semibold text-white focus:z-20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"><?= $i ?></span>
                                         <?php else: ?>
-                                            <a href="?page=<?= $i ?>"
+                                            <a href="<?= pageLink($i) ?>"
                                                 class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-gray-900 dark:text-gray-300 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 focus:z-20 focus:outline-offset-0"><?= $i ?></a>
                                         <?php endif; ?>
                                     <?php endfor; ?>
@@ -1079,13 +1276,13 @@ try {
                                             <span
                                                 class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-gray-700 dark:text-gray-400 ring-1 ring-inset ring-gray-300 dark:ring-gray-600">...</span>
                                         <?php endif; ?>
-                                        <a href="?page=<?= $totalPages ?>"
+                                        <a href="<?= pageLink($totalPages) ?>"
                                             class="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-gray-900 dark:text-gray-300 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 focus:z-20 focus:outline-offset-0"><?= $totalPages ?></a>
                                     <?php endif; ?>
 
                                     <!-- Next Button -->
                                     <?php if ($currentPage < $totalPages): ?>
-                                        <a href="?page=<?= $currentPage + 1 ?>"
+                                        <a href="<?= pageLink($currentPage + 1) ?>"
                                             class="relative inline-flex items-center rounded-r-md px-2 py-2 text-gray-400 ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 focus:z-20 focus:outline-offset-0">
                                             <span class="sr-only">Next</span>
                                             <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -1147,12 +1344,84 @@ try {
 
                         <!-- Lessons Learned -->
                         <div>
-                            <label for="lessons_learned" class="block text-sm font-medium text-gray-700 mb-2">
+                            <label for="lessons_learned_textarea" class="block text-sm font-medium text-gray-700 mb-2">
                                 Lessons Learned <span class="text-red-500">*</span>
                             </label>
-                            <textarea name="lessons_learned" id="lessons_learned" rows="4" required
+                            <textarea name="lessons_learned" id="lessons_learned_textarea" rows="3" required
                                 class="block w-full border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="What did we learn from this incident? How can we prevent it in the future?"></textarea>
+                                placeholder="What was learned from this incident?"></textarea>
+                        </div>
+
+                        <!-- Involved System Users -->
+                        <div x-data="userSelect({
+                            users: <?= htmlspecialchars(json_encode($activeUsers)) ?>,
+                            selectedUsers: []
+                        })" @reset-resolve-users.window="selectedUsers = []" class="mb-4 relative">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                Involved Officers (System Users)
+                            </label>
+
+                            <!-- Selected tags -->
+                            <div class="flex flex-wrap gap-2 mb-2">
+                                <template x-for="userId in selectedUsers" :key="userId">
+                                    <span
+                                        class="inline-flex items-center px-2 py-1 rounded text-sm font-medium bg-blue-100 text-blue-800">
+                                        <span x-text="users.find(u => u.user_id == userId)?.full_name || ''"></span>
+                                        <button type="button" @click.stop="removeUser(userId)"
+                                            class="ml-1 text-blue-600 hover:text-blue-800 focus:outline-none">&times;</button>
+                                    </span>
+                                </template>
+                            </div>
+
+                            <!-- Hidden inputs for form submission -->
+                            <template x-for="userId in selectedUsers">
+                                <input type="hidden" name="involved_users[]" :value="userId">
+                            </template>
+
+                            <!-- Search input -->
+                            <div class="relative">
+                                <input type="text" x-model="search" x-ref="searchInput" @focus="open = true"
+                                    @click.away="open = false" @keydown.escape="open = false"
+                                    class="block w-full border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                    placeholder="Search and select users..." autocomplete="off">
+
+                                <!-- Dropdown -->
+                                <div x-show="open"
+                                    class="absolute z-10 mt-1 w-full bg-white shadow-lg max-h-48 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm"
+                                    style="display: none;">
+                                    <template x-for="user in filteredUsers" :key="user.user_id">
+                                        <div @click="toggleUser(user.user_id)"
+                                            class="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-blue-50 transition-colors duration-150"
+                                            :class="{'bg-blue-100': selectedUsers.includes(user.user_id)}">
+                                            <span x-text="user.full_name" class="block truncate"
+                                                :class="{'font-semibold': selectedUsers.includes(user.user_id), 'font-normal': !selectedUsers.includes(user.user_id)}"></span>
+                                            <span x-show="selectedUsers.includes(user.user_id)"
+                                                class="absolute inset-y-0 right-0 flex items-center pr-4 text-blue-600">
+                                                <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path fill-rule="evenodd"
+                                                        d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
+                                                        clip-rule="evenodd" />
+                                                </svg>
+                                            </span>
+                                        </div>
+                                    </template>
+                                    <div x-show="filteredUsers.length === 0"
+                                        class="py-2 pl-3 pr-9 text-gray-500 text-sm">
+                                        No users found.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- External Involved Officers -->
+                        <div>
+                            <label for="resolve_external_names" class="block text-sm font-medium text-gray-700 mb-2">
+                                External Officers
+                            </label>
+                            <input type="text" id="resolve_external_names" name="external_names"
+                                class="block w-full border-gray-300 rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="e.g. John Doe, Jane Smith">
+                            <p class="mt-1 text-xs text-gray-500">Comma-separated names of external people involved.</p>
                         </div>
 
                         <!-- Resolution Date -->
@@ -1387,6 +1656,16 @@ try {
                                 <input type="datetime-local" id="edit_start_time" name="actual_start_time" required
                                     class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
                             </div>
+
+                            <!-- Resolved Time -->
+                            <div id="edit_resolved_time_container" class="hidden">
+                                <label for="edit_resolved_time"
+                                    class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Resolved Time
+                                </label>
+                                <input type="datetime-local" id="edit_resolved_time" name="resolved_at"
+                                    class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500">
+                            </div>
                         </div>
 
                         <!-- Description -->
@@ -1398,6 +1677,81 @@ try {
                             <textarea id="edit_description" name="description" rows="3"
                                 class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
                                 placeholder="Describe the incident..."></textarea>
+                        </div>
+
+                        <!-- Involved System Users -->
+                        <div x-data="userSelect({
+                            users: <?= htmlspecialchars(json_encode($activeUsers)) ?>,
+                            selectedUsers: []
+                        })" @set-edit-users.window="selectedUsers = $event.detail"
+                            @reset-edit-users.window="selectedUsers = []" class="mb-4 relative">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                Involved Officers (System Users)
+                            </label>
+
+                            <!-- Selected tags -->
+                            <div class="flex flex-wrap gap-2 mb-2">
+                                <template x-for="userId in selectedUsers" :key="userId">
+                                    <span
+                                        class="inline-flex items-center px-2 py-1 rounded text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                                        <span x-text="users.find(u => u.user_id == userId)?.full_name || ''"></span>
+                                        <button type="button" @click.stop="removeUser(userId)"
+                                            class="ml-1 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 focus:outline-none">&times;</button>
+                                    </span>
+                                </template>
+                            </div>
+
+                            <!-- Hidden inputs for form submission -->
+                            <template x-for="userId in selectedUsers">
+                                <input type="hidden" name="involved_users[]" :value="userId">
+                            </template>
+
+                            <!-- Search input -->
+                            <div class="relative">
+                                <input type="text" x-model="search" x-ref="searchInput" @focus="open = true"
+                                    @click.away="open = false" @keydown.escape="open = false"
+                                    class="block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                    placeholder="Search and select users..." autocomplete="off">
+
+                                <!-- Dropdown -->
+                                <div x-show="open"
+                                    class="absolute z-10 mt-1 w-full bg-white dark:bg-gray-800 shadow-lg max-h-48 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm"
+                                    style="display: none;">
+                                    <template x-for="user in filteredUsers" :key="user.user_id">
+                                        <div @click="toggleUser(user.user_id)"
+                                            class="cursor-pointer select-none relative py-2 pl-3 pr-9 hover:bg-blue-50 dark:hover:bg-gray-700 transition-colors duration-150"
+                                            :class="{'bg-blue-100 dark:bg-blue-900': selectedUsers.includes(user.user_id)}">
+                                            <span x-text="user.full_name" class="block truncate dark:text-white"
+                                                :class="{'font-semibold': selectedUsers.includes(user.user_id), 'font-normal': !selectedUsers.includes(user.user_id)}"></span>
+                                            <span x-show="selectedUsers.includes(user.user_id)"
+                                                class="absolute inset-y-0 right-0 flex items-center pr-4 text-blue-600 dark:text-blue-400">
+                                                <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path fill-rule="evenodd"
+                                                        d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
+                                                        clip-rule="evenodd" />
+                                                </svg>
+                                            </span>
+                                        </div>
+                                    </template>
+                                    <div x-show="filteredUsers.length === 0"
+                                        class="py-2 pl-3 pr-9 text-gray-500 dark:text-gray-400 text-sm">
+                                        No users found.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- External Involved Officers -->
+                        <div>
+                            <label for="edit_external_names"
+                                class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                                External Officers
+                            </label>
+                            <input type="text" id="edit_external_names" name="external_names"
+                                class="mt-1 block w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm py-2 px-3 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                placeholder="e.g. John Doe, Jane Smith">
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Comma-separated names of external
+                                people involved.</p>
                         </div>
 
                         <!-- Attachments Management -->
@@ -1536,96 +1890,8 @@ try {
         </div>
 
         <script>
-            // Status toggle functionality
-            document.addEventListener('DOMContentLoaded', function () {
-                const statusToggles = document.querySelectorAll('.status-toggle');
-
-                statusToggles.forEach(button => {
-                    button.addEventListener('click', function () {
-                        const status = this.getAttribute('data-status');
-
-                        // Update active state
-                        statusToggles.forEach(btn => {
-                            btn.classList.remove(
-                                'bg-blue-50', 'text-blue-700', 'border-blue-200',
-                                'bg-yellow-50', 'text-yellow-700', 'border-yellow-200',
-                                'bg-green-50', 'text-green-700', 'border-green-200'
-                            );
-                            btn.classList.add('bg-white', 'text-gray-700', 'border-gray-200');
-
-                            // Reset icon colors
-                            const icon = btn.querySelector('i');
-                            if (icon) {
-                                icon.classList.remove('text-blue-500', 'text-yellow-500', 'text-green-500');
-                                if (btn.getAttribute('data-status') === 'pending') {
-                                    icon.classList.add('text-yellow-500');
-                                } else if (btn.getAttribute('data-status') === 'resolved') {
-                                    icon.classList.add('text-green-500');
-                                } else {
-                                    icon.classList.add('text-gray-500');
-                                }
-                            }
-                        });
-
-                        // Set active button styles
-                        if (status === 'pending') {
-                            this.classList.add('bg-yellow-50', 'text-yellow-700', 'border-yellow-200');
-                            this.querySelector('i').classList.add('text-yellow-600');
-                        } else if (status === 'resolved') {
-                            this.classList.add('bg-green-50', 'text-green-700', 'border-green-200');
-                            this.querySelector('i').classList.add('text-green-600');
-                        } else {
-                            this.classList.add('bg-blue-50', 'text-blue-700', 'border-blue-200');
-                            this.querySelector('i').classList.add('text-blue-600');
-                        }
-
-                        // Filter incidents
-                        const incidents = document.querySelectorAll('.incident-card');
-                        const noResults = document.getElementById('no-results');
-                        let visibleCount = 0;
-
-                        incidents.forEach(incident => {
-                            const incidentStatus = incident.getAttribute('data-status');
-                            if (status === 'all' || incidentStatus === status) {
-                                incident.classList.remove('hidden');
-                                visibleCount++;
-                            } else {
-                                incident.classList.add('hidden');
-                            }
-                        });
-
-                        // Show/hide empty state
-                        // Only show "no results" if there are incidents but they're all filtered
-                        const hasIncidents = incidents.length > 0;
-                        if (visibleCount === 0 && hasIncidents) {
-                            noResults.classList.remove('hidden');
-                        } else {
-                            noResults.classList.add('hidden');
-                        }
-
-                        // Update URL without page reload
-                        const url = new URL(window.location);
-                        if (status === 'all') {
-                            url.searchParams.delete('status');
-                        } else {
-                            url.searchParams.set('status', status);
-                        }
-                        window.history.pushState({}, '', url);
-                    });
-                });
-
-                // Set initial active state from URL
-                const urlParams = new URLSearchParams(window.location.search);
-                const statusParam = urlParams.get('status');
-                if (statusParam) {
-                    const activeButton = document.querySelector(`.status-toggle[data-status="${statusParam}"]`);
-                    if (activeButton) activeButton.click();
-                } else {
-                    // Default to 'all' if no status in URL
-                    const allButton = document.querySelector('.status-toggle[data-status="all"]');
-                    if (allButton) allButton.click();
-                }
-            });
+            // Status toggle JS removed — status filtering is now server-side.
+            // The s         ection below handles the search box (client-side, within current page results).
 
             // Resolve Modal Functions
             function showResolveModal(incidentId, serviceName, rootCause = '') {
@@ -1635,6 +1901,7 @@ try {
                 // Set the incident ID and service name
                 document.getElementById('modal_incident_id').value = incidentId;
                 document.getElementById('modalServiceName').textContent = `Service: ${serviceName}`;
+                window.dispatchEvent(new CustomEvent('reset-resolve-users'));
 
                 // Set current date/time as default resolution date
                 const now = new Date();
@@ -1717,6 +1984,10 @@ try {
                         document.getElementById('edit_priority').value = data.priority;
                         document.getElementById('edit_description').value = data.description || '';
 
+                        // Populate involved officers
+                        document.getElementById('edit_external_names').value = data.external_names || '';
+                        window.dispatchEvent(new CustomEvent('set-edit-users', { detail: data.involved_users || [] }));
+
                         // Format datetime for datetime-local input
                         if (data.actual_start_time) {
                             const date = new Date(data.actual_start_time);
@@ -1726,6 +1997,25 @@ try {
                             const hours = String(date.getHours()).padStart(2, '0');
                             const minutes = String(date.getMinutes()).padStart(2, '0');
                             document.getElementById('edit_start_time').value = `${year}-${month}-${day}T${hours}:${minutes}`;
+                        }
+
+                        // Handle resolved time visibility and value
+                        if (data.status === 'resolved') {
+                            document.getElementById('edit_resolved_time_container').classList.remove('hidden');
+                            if (data.resolved_at) {
+                                const rDate = new Date(data.resolved_at);
+                                const rYear = rDate.getFullYear();
+                                const rMonth = String(rDate.getMonth() + 1).padStart(2, '0');
+                                const rDay = String(rDate.getDate()).padStart(2, '0');
+                                const rHours = String(rDate.getHours()).padStart(2, '0');
+                                const rMinutes = String(rDate.getMinutes()).padStart(2, '0');
+                                document.getElementById('edit_resolved_time').value = `${rYear}-${rMonth}-${rDay}T${rHours}:${rMinutes}`;
+                            } else {
+                                document.getElementById('edit_resolved_time').value = '';
+                            }
+                        } else {
+                            document.getElementById('edit_resolved_time_container').classList.add('hidden');
+                            document.getElementById('edit_resolved_time').value = '';
                         }
 
                         // Check affected companies
@@ -1962,6 +2252,33 @@ try {
                         this.style.height = (this.scrollHeight) + 'px';
                     });
                 });
+            });
+        </script>
+
+        <script>
+            document.addEventListener('alpine:init', () => {
+                Alpine.data('userSelect', (config) => ({
+                    open: false,
+                    search: '',
+                    users: config.users,
+                    selectedUsers: config.selectedUsers,
+                    get filteredUsers() {
+                        if (this.search === '') return this.users;
+                        return this.users.filter(u => u.full_name.toLowerCase().includes(this.search.toLowerCase()));
+                    },
+                    toggleUser(id) {
+                        if (this.selectedUsers.includes(id)) {
+                            this.selectedUsers = this.selectedUsers.filter(u => u !== id);
+                        } else {
+                            this.selectedUsers.push(id);
+                        }
+                        this.search = '';
+                        this.$refs.searchInput.focus();
+                    },
+                    removeUser(id) {
+                        this.selectedUsers = this.selectedUsers.filter(u => u !== id);
+                    }
+                }));
             });
         </script>
 
