@@ -40,23 +40,23 @@ function isAdminMobileActive($page)
                 <div class="hidden md:flex space-x-1 absolute left-1/2 transform -translate-x-1/2">
                     <a href="<?= url('admin/index.php') ?>"
                         class="<?php echo isAdminActive('index.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
-                        <i class="fas fa-tachometer-alt mr-2"></i>Dashboard
+                        </i>Dashboard
                     </a>
                     <a href="<?= url('admin/users.php') ?>"
                         class="<?php echo isAdminActive('users.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
-                        <i class="fas fa-users mr-2"></i>Users
+                        </i>Users
                     </a>
                     <a href="<?= url('admin/activity_logs.php') ?>"
                         class="<?php echo isAdminActive('activity_logs.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
-                        <i class="fas fa-history mr-2"></i>Activity Logs
+                        </i>Activity Logs
                     </a>
-                    <a href="<?= url('admin/manage.php') ?>"  
+                    <a href="<?= url('admin/manage.php') ?>"
                         class="<?php echo isAdminActive('manage.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
-                        <i class="fas fa-cogs mr-2"></i>Manage System
+                        </i>Manage System
                     </a>
                     <a href="<?= url('admin/templates.php') ?>"
                         class="<?php echo isAdminActive('templates.php'); ?> px-4 py-2 text-sm font-medium transition-colors duration-150">
-                        <i class="fas fa-file-alt mr-2"></i>Templates
+                        </i>Templates
                     </a>
                 </div>
 
@@ -105,7 +105,8 @@ function isAdminMobileActive($page)
                                 <div class="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
                                     <p class="text-xs text-gray-500 dark:text-gray-400">Admin</p>
                                     <p class="text-sm font-medium text-gray-900 dark:text-white truncate">
-                                        <?= htmlspecialchars($currentUser['username']) ?></p>
+                                        <?= htmlspecialchars($currentUser['username']) ?>
+                                    </p>
                                 </div>
                                 <a href="<?= url('logout.php') ?>"
                                     class="block px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700">
@@ -168,27 +169,33 @@ function isAdminMobileActive($page)
                 <i class="fas fa-arrow-left mr-2"></i>Back to App
             </a>
         </div>
-        
+
         <!-- User Profile (Mobile) -->
         <?php if ($currentUser): ?>
-        <div class="pt-4 pb-3 border-t border-gray-200 dark:border-gray-700">
-            <div class="flex items-center px-4">
-                <div class="flex-shrink-0">
-                    <div class="flex items-center justify-center w-10 h-10 rounded-full bg-purple-600 text-white font-semibold">
-                        <?= strtoupper(substr($currentUser['full_name'], 0, 1)) ?>
+            <div class="pt-4 pb-3 border-t border-gray-200 dark:border-gray-700">
+                <div class="flex items-center px-4">
+                    <div class="flex-shrink-0">
+                        <div
+                            class="flex items-center justify-center w-10 h-10 rounded-full bg-purple-600 text-white font-semibold">
+                            <?= strtoupper(substr($currentUser['full_name'], 0, 1)) ?>
+                        </div>
+                    </div>
+                    <div class="ml-3">
+                        <div class="text-base font-medium text-gray-800 dark:text-white">
+                            <?= htmlspecialchars($currentUser['full_name']) ?>
+                        </div>
+                        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+                            <?= htmlspecialchars($currentUser['username']) ?>
+                        </div>
                     </div>
                 </div>
-                <div class="ml-3">
-                    <div class="text-base font-medium text-gray-800 dark:text-white"><?= htmlspecialchars($currentUser['full_name']) ?></div>
-                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400"><?= htmlspecialchars($currentUser['username']) ?></div>
+                <div class="mt-3 px-2 space-y-1">
+                    <a href="../../public/logout.php"
+                        class="block px-3 py-2 rounded-lg text-base font-medium text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-150">
+                        <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                    </a>
                 </div>
             </div>
-            <div class="mt-3 px-2 space-y-1">
-                <a href="../../public/logout.php" class="block px-3 py-2 rounded-lg text-base font-medium text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-150">
-                    <i class="fas fa-sign-out-alt mr-2"></i>Logout
-                </a>
-            </div>
-        </div>
         <?php endif; ?>
     </div>
 </nav>
